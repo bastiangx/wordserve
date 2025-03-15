@@ -1,8 +1,11 @@
 # Typr Lib
 
-## Project Overview
-
 A lightweight word completion engine based on prefix tree (trie) data structure, designed for real-time word suggestions as users type. The system prioritizes memory efficiency, speed, and relevance of suggestions.
+
+#### Actual Usage
+
+When a user types a partial word, the engine suggests the most likely completions based on the frequency of words in the dictionary. The suggestions are ranked by usage statistics to provide the most relevant options.
+So, the engine needs to only provide the most likely completions based on the frequency of words in the dictionary ( 1 word suggestion is enough).
 
 ## Technical Design
 

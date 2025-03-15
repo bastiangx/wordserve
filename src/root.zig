@@ -1,5 +1,3 @@
-// TODO:  decouple this later
-
 //! A Trie implementation for fast prefix-based word suggestions.
 //!
 //! Provides a Trie data structure prefix-based word completion:
@@ -183,7 +181,76 @@ const Trie = struct {
     }
 };
 
-// TODO: rm hardcoded objects
+/// Loads words from a corpus file into the trie.
+/// Format expected: one word per line, optionally with frequency.
+/// If frequency is not provided, it will be derived from word length
+/// (shorter words are generally more frequent in natural language).
+fn loadCorpus(trie: *Trie, file_path: []const u8) !usize {
+    const file = try std.fs.cwd().openFile(file_path, .{});
+    defer file.close();
+
+    var buf_reader = std.io.bufferedReader(file.reader());
+    var in_stream = buf_reader.reader();
+
+    var buf: [MAX_WORD_LENGTH]u8 = undefined;
+    var count: usize = 0;
+
+    // Read the file line by line
+    while (try in_stream.readUntilDelimiterOrEof(&buf, '\n')) |line| {
+        if (line.len == 0) continue;
+        
+        // Split on whitespace or tab if format is "word freq"
+        var parts = std.mem.splitAny(u8, line, " \t");
+        const word = parts.first();
+        
+        // parse freq
+        var freq: u8 = undefined;
+        if (parts.next()) |freq_str| {
+            freq = try std.fmt.parseInt(u8, freq_str, 10);
+        } else {
+            // Simple frequency heuristic based on word length
+            // Alternative simpler approach
+            const word_len: u8 = @intCast(word.len);
+            // Cast to u16 for intermediate calculation to avoid overflow
+            const score: u16 = @as(u16, word_len) * 10;
+            freq = 255 - @as(u8, @min(score, 200));
+        }
+        
+        if (word.len > 0 and word.len < MAX_WORD_LENGTH) {
+            try trie.insert(word, freq);
+            count += 1;
+        }
+    }
+    
+    return count;
+}
+
+fn testQueries(trie: *Trie, queries: []const []const u8, allocator: Allocator) !void {
+    std.debug.print("\n=== Testing Trie Suggestions ===\n\n", .{});
+    
+    for (queries) |query| {
+        var results = ArrayList(Suggestion).init(allocator);
+        defer {
+            for (results.items) |suggestion| {
+                allocator.free(suggestion.word);
+            }
+            results.deinit();
+        }
+
+        try trie.findSuggestions(query, &results);
+        
+        std.debug.print("Query: \"{s}\"\n", .{query});
+        if (results.items.len == 0) {
+            std.debug.print("  No suggestions found\n", .{});
+        } else {
+            for (results.items) |suggestion| {
+                std.debug.print("  {s} ({d})\n", .{suggestion.word, suggestion.frequency});
+            }
+        }
+        std.debug.print("\n", .{});
+    }
+}
+
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
@@ -192,25 +259,46 @@ pub fn main() !void {
     var trie = try Trie.init(allocator);
     defer trie.deinit();
 
-    try trie.insert("the", 100);
-    try trie.insert("there", 80);
-    try trie.insert("their", 75);
-    try trie.insert("they", 70);
-    try trie.insert("then", 65);
-    try trie.insert("that", 95);
-    try trie.insert("thequickbrownfoxjumpsoverthelazydog", 50); // Add a long word
+    const corpus_path = "src/words"; 
+    
+    // Define test queries
+    const queries = [_][]const u8{
+        "th",
+        "pro",
+        "ex",
+        "com",
+        "z", 
+    };
 
-    var results = ArrayList(Suggestion).init(allocator);
-    defer {
-        for (results.items) |suggestion| {
-            allocator.free(suggestion.word);
-        }
-        results.deinit();
-    }
-
-    try trie.findSuggestions("th", &results);
-
-    for (results.items) |suggestion| {
-        std.debug.print("{s} ({d})\n", .{ suggestion.word, suggestion.frequency });
-    }
+    std.debug.print("Loading corpus from {s}...\n", .{corpus_path});
+    const word_count = loadCorpus(&trie, corpus_path) catch |err| {
+        std.debug.print("Error loading corpus: {any}\n", .{err});
+        
+        // Fallback to hardcoded words
+        std.debug.print("Falling back to hardcoded words\n", .{});
+        try trie.insert("the", 100);
+        try trie.insert("there", 80);
+        try trie.insert("their", 75);
+        try trie.insert("they", 70);
+        try trie.insert("then", 65);
+        try trie.insert("that", 95);
+        try trie.insert("programming", 85);
+        try trie.insert("problem", 82);
+        try trie.insert("process", 78);
+        try trie.insert("executive", 60);
+        try trie.insert("example", 90);
+        try trie.insert("expert", 75);
+        try trie.insert("computer", 95);
+        try trie.insert("complete", 80);
+        try trie.insert("command", 75);
+        try trie.insert("zero", 50);
+        try trie.insert("zoo", 45);
+        
+        // Return hardcoded word count instead of an integer
+        return testQueries(&trie, &queries, allocator);
+    };
+    
+    std.debug.print("Loaded {d} words into the trie\n", .{word_count});
+    
+    try testQueries(&trie, &queries, allocator);
 }
