@@ -52,41 +52,49 @@ function Process_corpus(filename)
 		print("Error: Could not open file " .. filename)
 		return
 	end
+
+	-- Read all words into an array preserving original order
+	local all_words = {}
 	local line_count = 0
 
 	for line in file:lines() do
 		line_count = line_count + 1
-		-- Tokenize line into words
-		local words = {}
-		for word in line:gmatch("%S+") do
-			table.insert(words, word:lower())
-		end
-
-		-- unigrams
-		for i = 1, #words do
-			local word = words[i]
-			unigrams[word] = (unigrams[word] or 0) + 1
-		end
-
-		for i = 1, #words - 1 do
-			local bigram = words[i] .. " " .. words[i + 1]
-			bigrams[bigram] = (bigrams[bigram] or 0) + 1
-		end
-
-		-- trigrams
-		for i = 1, #words - 2 do
-			local trigram = words[i] .. " " .. words[i + 1] .. " " .. words[i + 2]
-			trigrams[trigram] = (trigrams[trigram] or 0) + 1
-		end
-
-		if line_count % 10000 == 0 then
-			print("Processed " .. line_count .. " lines")
+		local word = line:lower():match("%S+")
+		if word then
+			table.insert(all_words, word)
 		end
 	end
 
-	if file then
-		file:close()
+	-- DO NOT sort words - preserve the original frequency order from the file
+	-- The 20k.txt file already has words ordered by frequency (most common first)
+
+	-- Assign frequencies using position in the list (higher rank = lower frequency)
+	for rank, word in ipairs(all_words) do
+		-- Zipf's law: frequency is roughly proportional to 1/rank
+		local freq = math.floor(1000000 / rank)     -- Simple inverse relationship
+		if freq < 1 then freq = 1 end
+
+		unigrams[word] = freq
+
+		-- For debugging
+		if rank % 1000 == 0 or rank < 20 then
+			print(string.format("Assigning word '%s' (rank %d) frequency: %d", word, rank, freq))
+		end
 	end
+
+	-- Generate bigrams with derived frequencies
+	for i = 1, #all_words - 1 do
+		local w1 = all_words[i]
+		local w2 = all_words[i + 1]
+		local freq = math.floor(math.sqrt(unigrams[w1] * unigrams[w2] * 0.1))
+		if freq < 1 then freq = 1 end
+
+		local bigram = w1 .. " " .. w2
+		bigrams[bigram] = freq
+	end
+
+	file:close()
+	print("Processed " .. #all_words .. " words with calculated frequencies")
 end
 
 function Save_binary(ngrams, filename)
@@ -96,21 +104,30 @@ function Save_binary(ngrams, filename)
 		return
 	end
 
-	-- Write header with count
-	local count = 0
-	for _ in pairs(ngrams) do
-		count = count + 1
+	-- Convert to sorted array for deterministic output
+	local sorted_items = {}
+	for ngram, freq in pairs(ngrams) do
+		table.insert(sorted_items, { word = ngram, freq = freq })
 	end
+
+	-- Sort by frequency (highest first)
+	table.sort(sorted_items, function(a, b) return a.freq > b.freq end)
+
+	-- Write header with count
+	local count = #sorted_items
 	local count_ptr = ffi.new("int32_t[1]", count)
 	file:write(ffi.string(count_ptr, 4))
 
 	print("Writing " .. count .. " entries to " .. filename)
 
-	-- Write each n-gram and its frequency
-	for ngram, freq in pairs(ngrams) do
+	-- Write each n-gram and its frequency in frequency order
+	for _, item in ipairs(sorted_items) do
+		local ngram = item.word
+		local freq = item.freq
+
 		local len = #ngram
 		local len_ptr = ffi.new("uint16_t[1]", len)
-		file:write(ffi.string(len_ptr, 2)) -- Write the word length
+		file:write(ffi.string(len_ptr, 2))     -- Write the word length
 
 		-- Write the actual word string
 		file:write(ngram)
@@ -118,12 +135,19 @@ function Save_binary(ngrams, filename)
 		-- Write the frequency value
 		local freq_ptr = ffi.new("uint32_t[1]", freq)
 		file:write(ffi.string(freq_ptr, 4))
+
+		-- Debug only high frequency words
+		if freq > 10000 then
+			print(string.format("Writing high-freq word: '%s' with frequency: %d", ngram, freq))
+		end
 	end
 
-	if file then
-		file:close()
+	print("Top 10 highest frequency items:")
+	for i = 1, math.min(10, #sorted_items) do
+		print(string.format("%s: %d", sorted_items[i].word, sorted_items[i].freq))
 	end
 
+	file:close()
 	print("Finished writing " .. filename)
 end
 
@@ -188,4 +212,3 @@ end
 
 Save_trie(word_trie, "word_trie.bin")
 print("All processing complete!")
-

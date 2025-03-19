@@ -61,12 +61,26 @@ func (c *Completer) Complete(prefix string, limit int) []Suggestion {
 
 	// Visit subtree and collect suggestions
 	err := c.trie.VisitSubtree(patricia.Prefix(prefix), func(p patricia.Prefix, item patricia.Item) error {
-		if freq, ok := item.(int); ok {
-			suggestions = append(suggestions, Suggestion{
-				Word:      string(p),
-				Frequency: freq,
-			})
+		var freq int = 1 // Default frequency
+
+		// Try different type conversions
+		switch v := item.(type) {
+		case int:
+			freq = v
+		case int32:
+			freq = int(v)
+		case uint32:
+			freq = int(v)
+		case float64:
+			freq = int(v)
+		default:
+			fmt.Printf("Unknown item type: %T for word %s\n", item, p)
 		}
+
+		suggestions = append(suggestions, Suggestion{
+			Word:      string(p),
+			Frequency: freq,
+		})
 		return nil
 	})
 	if err != nil {
@@ -159,6 +173,22 @@ func (c *Completer) LoadBinaryDictionary(filename string) error {
 		var freq uint32
 		if err := binary.Read(reader, binary.LittleEndian, &freq); err != nil {
 			return fmt.Errorf("error reading frequency: %v", err)
+		}
+
+		// Debug every entry to check what's being read
+		fmt.Printf("DEBUG: Loading word: '%s' with raw freq: %d\n", word, freq)
+
+		// Add word to trie with actual frequency, not the default 1
+		if freq > 0 {
+			c.AddWord(word, int(freq))
+		} else {
+			// Fallback if frequency is somehow zero
+			c.AddWord(word, 1)
+		}
+
+		// Add logging to see what frequencies are being loaded
+		if count < 10 || int(freq) > 1000 {
+			fmt.Printf("Loading word: %s with frequency: %d\n", word, freq)
 		}
 
 		// Add word to trie
