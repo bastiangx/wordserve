@@ -1,4 +1,6 @@
-.zig-cache/
-zig-out/
-
-zig-docs/
+/target
+**/*.rs.bk
+Cargo.lock
+bin/
+pkg/
+wasm-pack.log
