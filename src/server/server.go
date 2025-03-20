@@ -19,10 +19,12 @@ type ResponseSuggestion struct {
 
 // CompletionResponse is the overall API response format
 type CompletionResponse struct {
-	Suggestions []ResponseSuggestion `json:"suggestions"`
-	Count       int                  `json:"count"`
-	Prefix      string               `json:"prefix"`
-	TimeTaken   int64                `json:"time_ms"`
+	Suggestions     []ResponseSuggestion `json:"suggestions"`
+	Count           int                  `json:"count"`
+	Prefix          string               `json:"prefix"`
+	TimeTaken       int64                `json:"time_ms"`
+	WasCorrected    bool                 `json:"was_corrected,omitempty"`
+	CorrectedPrefix string               `json:"corrected_prefix,omitempty"`
 }
 
 // ErrorResponse represents an API error
@@ -127,20 +129,42 @@ func (s *Server) handleComplete(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Get suggestions
+	// Get fuzzy parameter (default to true)
+	fuzzyStr := r.URL.Query().Get("fuzzy")
+	useFuzzy := true
+	if fuzzyStr == "false" || fuzzyStr == "0" {
+		useFuzzy = false
+	}
+
+	// Get suggestions with optional fuzzy matching
 	start := time.Now()
-	suggestions := s.completer.Complete(prefix, limit)
+	var suggestions []completion.Suggestion
+	if useFuzzy {
+		suggestions = s.completer.CompleteWithFuzzy(prefix, limit)
+	} else {
+		suggestions = s.completer.Complete(prefix, limit)
+	}
 	elapsed := time.Since(start)
 
-	// Normalize rankings from 10 to 1
+	// Normalize rankings from 1 to 10
 	normalizedSuggestions := normalizeRankings(suggestions)
+
+	// Add 'corrected' field to response if needed
+	wasCorrected := false
+	correctedPrefix := ""
+	if len(suggestions) > 0 && suggestions[0].WasCorrected {
+		wasCorrected = true
+		correctedPrefix = suggestions[0].CorrectedPrefix
+	}
 
 	// Prepare response
 	response := CompletionResponse{
-		Suggestions: normalizedSuggestions,
-		Count:       len(normalizedSuggestions),
-		Prefix:      prefix,
-		TimeTaken:   elapsed.Milliseconds(),
+		Suggestions:     normalizedSuggestions,
+		Count:           len(normalizedSuggestions),
+		Prefix:          prefix,
+		TimeTaken:       elapsed.Milliseconds(),
+		WasCorrected:    wasCorrected,
+		CorrectedPrefix: correctedPrefix,
 	}
 
 	json.NewEncoder(w).Encode(response)

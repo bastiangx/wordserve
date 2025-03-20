@@ -46,14 +46,18 @@ func main() {
 	completer := completion.NewCompleter()
 	start := time.Now()
 
-	// Load binary dictionaries if directory exists
-	if _, err := os.Stat(*binaryDir); err == nil {
+	// Load binary dictionaries if specified
+	if *binaryDir != "" {
 		fmt.Printf("Loading binary dictionaries from %s...\n", *binaryDir)
-		if err := completer.LoadAllBinaries(*binaryDir); err != nil {
+		err := completer.LoadAllBinaries(*binaryDir)
+		if err != nil {
 			fmt.Printf("Error loading binary dictionaries: %v\n", err)
+			return
 		}
-	} else {
-		fmt.Printf("Binary directory %s not found or inaccessible\n", *binaryDir)
+		fmt.Printf("Loaded dictionaries from %s\n", *binaryDir)
+
+		// Initialize fuzzy matcher after loading dictionary
+		completer.InitFuzzyMatcher()
 	}
 
 	// Load text dictionary if provided

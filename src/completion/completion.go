@@ -11,13 +11,17 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/bastiangx/typr-lib/src/fuzzy"
 	"github.com/tchap/go-patricia/v2/patricia"
 )
 
 // Suggestion represents a word completion suggestion with its frequency
 type Suggestion struct {
-	Word      string
-	Frequency int
+	Word            string
+	Frequency       int
+	WasCorrected    bool   `json:",omitempty"`
+	OriginalPrefix  string `json:",omitempty"`
+	CorrectedPrefix string `json:",omitempty"`
 }
 
 // Completer provides word completion functionality
@@ -27,6 +31,8 @@ type Completer struct {
 	trie         *patricia.Trie
 	totalWords   int
 	maxFrequency int
+	fuzzyMatcher *fuzzy.FuzzyMatcher
+	wordFreqs    map[string]int // Add this to store word frequencies
 }
 
 // WordBufferPool is a pool of byte slices for word completions
@@ -43,12 +49,14 @@ func NewCompleter() *Completer {
 		trie:         patricia.NewTrie(),
 		totalWords:   0,
 		maxFrequency: 0,
+		wordFreqs:    make(map[string]int),
 	}
 }
 
 // AddWord adds a word with its frequency to the trie
 func (c *Completer) AddWord(word string, frequency int) {
 	c.trie.Insert(patricia.Prefix(word), frequency)
+	c.wordFreqs[word] = frequency
 	c.totalWords++
 	if frequency > c.maxFrequency {
 		c.maxFrequency = frequency
@@ -425,4 +433,37 @@ func (c *Completer) Stats() map[string]int {
 		"totalWords":   c.totalWords,
 		"maxFrequency": c.maxFrequency,
 	}
+}
+
+// InitFuzzyMatcher initializes the fuzzy matcher after dictionary loading
+func (c *Completer) InitFuzzyMatcher() {
+	c.fuzzyMatcher = fuzzy.NewFuzzyMatcher(c.wordFreqs)
+}
+
+// Add a wrapper method that incorporates fuzzy matching
+func (c *Completer) CompleteWithFuzzy(prefix string, limit int) []Suggestion {
+	// Skip fuzzy matching for very short prefixes
+	if len(prefix) < 3 {
+		return c.Complete(prefix, limit)
+	}
+
+	// Apply fuzzy correction if needed
+	correctedPrefix, wasFixed := c.fuzzyMatcher.SuggestCorrection(prefix)
+
+	// If we made a correction, use the corrected prefix
+	if wasFixed && correctedPrefix != prefix {
+		suggestions := c.Complete(correctedPrefix, limit)
+
+		// Add the corrected prefix as a property in the returned results
+		for i := range suggestions {
+			suggestions[i].WasCorrected = true
+			suggestions[i].OriginalPrefix = prefix
+			suggestions[i].CorrectedPrefix = correctedPrefix
+		}
+
+		return suggestions
+	}
+
+	// No correction needed, use standard completion
+	return c.Complete(prefix, limit)
 }
