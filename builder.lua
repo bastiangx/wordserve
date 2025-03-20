@@ -300,7 +300,7 @@ end
 print("Starting corpus processing...")
 
 -- Process all text files in the corpus directory
-Process_corpus_directory("corpus")
+Process_corpus_directory("corpus_stopwords")
 
 -- sort and output unigrams
 print("Saving unigrams...")

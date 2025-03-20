@@ -2,3 +2,7 @@
 bin/
 pkg/
 wasm-pack.log
+
+corpus/
+corpus_stopwords/
+*.txt

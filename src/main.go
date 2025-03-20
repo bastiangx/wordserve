@@ -9,16 +9,19 @@ import (
 	"time"
 
 	"github.com/bastiangx/typr-lib/src/completion"
+	"github.com/bastiangx/typr-lib/src/server"
 )
 
 func main() {
 	// Define command line flags
-	binaryDir := flag.String("binaries", "./binaries", "Directory containing binary dictionary files")
+	binaryDir := flag.String("binaries", "./src/binaries", "Directory containing binary dictionary files")
 	textDict := flag.String("text", "", "Path to text dictionary file")
 	corpusDir := flag.String("corpus", "./corpus", "Path to corpus directory")
 	buildCorpus := flag.Bool("build", false, "Build dictionary from corpus")
 	exportBin := flag.String("export", "", "Export path for binary dictionary")
-	interactive := flag.Bool("interactive", true, "Run in interactive mode")
+	interactive := flag.Bool("interactive", false, "Run in interactive mode")
+	serverMode := flag.Bool("server", false, "Run as HTTP server")
+	port := flag.String("port", "8080", "Port for HTTP server")
 	flag.Parse()
 
 	// Check if we should build from corpus
@@ -62,7 +65,7 @@ func main() {
 	}
 
 	loadTime := time.Since(start)
-
+	// DEBUG: Print dictionary
 	// Print statistics
 	stats := completer.Stats()
 	fmt.Printf("Dictionary loaded with %d words in %v. Max frequency: %d\n",
@@ -78,9 +81,22 @@ func main() {
 		}
 	}
 
-	// Interactive completion loop
-	if *interactive {
+	// Choose running mode
+	if *serverMode {
+		// Run as HTTP server
+		srv := server.NewServer(completer, *port)
+		fmt.Printf("Starting server on port %s...\n", *port)
+		if err := srv.Start(); err != nil {
+			fmt.Printf("Server error: %v\n", err)
+			os.Exit(1)
+		}
+	} else if *interactive {
+		// Run interactive CLI
 		runInteractive(completer)
+	} else {
+		// Print usage if no mode is selected
+		fmt.Println("Please specify either --interactive or --server mode")
+		flag.Usage()
 	}
 }
 

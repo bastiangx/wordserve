@@ -246,20 +246,12 @@ func (c *Completer) LoadBinaryDictionary(filename string) error {
 			return fmt.Errorf("error reading frequency: %v", err)
 		}
 
-		// Debug every entry to check what's being read
-		fmt.Printf("DEBUG: Loading word: '%s' with raw freq: %d\n", word, freq)
-
 		// Add word to trie with actual frequency, not the default 1
 		if freq > 0 {
 			c.AddWord(word, int(freq))
 		} else {
 			// Fallback if frequency is somehow zero
 			c.AddWord(word, 1)
-		}
-
-		// Add logging to see what frequencies are being loaded
-		if count < 10 || int(freq) > 1000 {
-			fmt.Printf("Loading word: %s with frequency: %d\n", word, freq)
 		}
 
 		// Add word to trie
