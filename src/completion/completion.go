@@ -55,8 +55,21 @@ func (c *Completer) AddWord(word string, frequency int) {
 	}
 }
 
-// Complete returns suggestions for a given prefix
+// Complete returns suggestions for a given prefix with optional frequency threshold
 func (c *Completer) Complete(prefix string, limit int) []Suggestion {
+	// Set minimum frequency threshold to filter out gibberish
+	// This is a reasonable starting value - adjust based on your corpus size
+	// CONSTANT: all words
+	// DEBUG: im doing higher threshold since i have the biggest corpus rn
+	minFrequencyThreshold := 40
+
+	// For short or repetitive prefixes, increase the threshold to avoid nonsense
+	if len(prefix) <= 2 || isRepetitive(prefix) {
+		// CONSTANT: small words
+		// DEBUG: im doing higher threshold since i have the biggest corpus rn
+		minFrequencyThreshold = 60
+	}
+
 	suggestions := make([]Suggestion, 0)
 
 	// Visit subtree and collect suggestions
@@ -75,6 +88,16 @@ func (c *Completer) Complete(prefix string, limit int) []Suggestion {
 			freq = int(v)
 		default:
 			fmt.Printf("Unknown item type: %T for word %s\n", item, p)
+		}
+
+		// Skip the exact match of the prefix
+		if string(p) == prefix {
+			return nil
+		}
+
+		// Skip low frequency words (likely garbage or typos in corpus)
+		if freq < minFrequencyThreshold {
+			return nil
 		}
 
 		suggestions = append(suggestions, Suggestion{
@@ -99,6 +122,54 @@ func (c *Completer) Complete(prefix string, limit int) []Suggestion {
 	}
 
 	return suggestions
+}
+
+// isRepetitive checks if a string consists of repetitive characters
+// like "aaa", "bbb", "ababab", etc.
+func isRepetitive(s string) bool {
+	if len(s) <= 1 {
+		return false
+	}
+
+	// Check for simple repetition (same character repeated)
+	allSame := true
+	for i := 1; i < len(s); i++ {
+		if s[i] != s[0] {
+			allSame = false
+			break
+		}
+	}
+	if allSame {
+		return true
+	}
+
+	// Check for pattern repetition
+	if len(s) >= 4 {
+		// Check if it's a repeating pattern (like "abababab")
+		for patternLen := 1; patternLen <= len(s)/2; patternLen++ {
+			pattern := s[:patternLen]
+			isRepeating := true
+
+			for i := patternLen; i < len(s); i += patternLen {
+				end := i + patternLen
+				if end > len(s) {
+					end = len(s)
+				}
+
+				segment := s[i:end]
+				if pattern[:len(segment)] != segment {
+					isRepeating = false
+					break
+				}
+			}
+
+			if isRepeating {
+				return true
+			}
+		}
+	}
+
+	return false
 }
 
 // LoadBinaryDictionary loads a binary n-gram dictionary file

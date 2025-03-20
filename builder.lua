@@ -1,14 +1,29 @@
--- This script processes a text file and builds n-gram models from it.
--- It then saves the n-grams to binary files for later use.
+-- This script processes text files from a corpus and builds a unigram model.
+-- It then saves the unigrams to binary files for later use.
 
 -- Optimized for LUAJIT processing
-
 local ffi = require("ffi")
 
--- store different n-gram levels
+-- Try to load LuaFileSystem, but don't fail if not available
+local lfs_available = false
+local lfs = nil
+local status, err = pcall(function() lfs = require("lfs") end)
+if status then
+	lfs_available = true
+	print("Using LuaFileSystem for directory traversal")
+else
+	print("LuaFileSystem not available: " .. tostring(err))
+	print("Using fallback directory traversal method with shell commands")
+	-- Check if we're on Unix-like system
+	if package.config:sub(1, 1) == '/' then
+		print("Detected Unix-like system")
+	else
+		print("WARNING: Fallback method works best on Unix-like systems")
+	end
+end
+
+-- store unigrams
 local unigrams = {}
-local bigrams = {}
-local trigrams = {}
 
 local Trie = {}
 Trie.__index = Trie
@@ -18,8 +33,6 @@ function Trie.new()
 		children = {},
 		is_word = false,
 		frequency = 0,
-		-- {word = frequency}
-		next_words = {},
 	}, Trie)
 end
 
@@ -31,70 +44,135 @@ function Trie:insert(word, freq)
 		node = node.children[char]
 	end
 	node.is_word = true
-	node.frequency = freq
+	node.frequency = (node.frequency or 0) + freq
 end
 
-function Trie:add_bigram(word1, word2, freq)
-	local node = self
-	-- Insert first
-	for i = 1, #word1 do
-		local char = word1:sub(i, i)
-		node.children[char] = node.children[char] or Trie.new()
-		node = node.children[char]
+-- Helper function to clean and extract valid words
+function extract_words(text)
+	local words = {}
+	-- Remove special markers like @@31618941 and HTML tags
+	text = text:gsub("@@%d+", " "):gsub("<%/?[^>]+>", " ")
+
+	-- Split on whitespace and extract only valid words (alphabetic characters)
+	for word in text:gmatch("%S+") do
+		-- Convert to lowercase and remove non-alphabetic characters
+		local clean_word = word:lower():gsub("[^a-z]", "")
+		if #clean_word > 0 then -- Only add non-empty words
+			table.insert(words, clean_word)
+		end
 	end
-	-- add association with second word
-	node.next_words[word2] = (node.next_words[word2] or 0) + freq
+
+	return words
 end
 
-function Process_corpus(filename)
+-- Alternative directory listing function using shell commands
+function list_files_shell(directory)
+	local files = {}
+	local count = 0
+
+	local is_unix = package.config:sub(1, 1) == '/'
+	local cmd = is_unix and ("ls -1 " .. directory) or ("dir /b " .. directory)
+
+	local p = io.popen(cmd)
+	if not p then return files, 0 end
+
+	for file in p:lines() do
+		if file ~= "." and file ~= ".." then
+			local filepath = directory .. "/" .. file
+			local f = io.open(filepath, "r")
+			if f then
+				f:close()
+				if filepath:match("%.txt$") then
+					table.insert(files, file)
+					count = count + 1
+				end
+			end
+		end
+	end
+	p:close()
+
+	return files, count
+end
+
+function Process_corpus_directory(directory)
+	local file_count = 0
+	local processed_count = 0
+	local files = {}
+	local words_processed = 0
+
+	print("Processing corpus files in " .. directory)
+
+	-- Get list of files using the appropriate method
+	if lfs_available and lfs then
+		-- Using LuaFileSystem
+		for file in lfs.dir(directory) do
+			if file ~= "." and file ~= ".." then
+				local f_path = directory .. "/" .. file
+				local attr = lfs.attributes(f_path)
+				if attr and attr.mode == "file" and f_path:match("%.txt$") then
+					table.insert(files, file)
+					file_count = file_count + 1
+				end
+			end
+		end
+	else
+		-- Using shell command fallback
+		files, file_count = list_files_shell(directory)
+	end
+
+	print("Found " .. file_count .. " text files to process")
+
+	-- Process each text file
+	for _, file in ipairs(files) do
+		local f_path = directory .. "/" .. file
+		processed_count = processed_count + 1
+
+		if processed_count % 10 == 0 or processed_count == 1 then
+			print(string.format("Processing file %d of %d: %s",
+				processed_count, file_count, file))
+		end
+
+		local words = Process_file(f_path)
+		for _, word in ipairs(words) do
+			-- Accumulate word frequencies
+			unigrams[word] = (unigrams[word] or 0) + 1
+			words_processed = words_processed + 1
+		end
+
+		-- Occasionally run garbage collection on large datasets
+		if processed_count % 20 == 0 then
+			collectgarbage("step")
+		end
+	end
+
+	print("Finished processing " .. processed_count .. " files")
+	print("Total words processed: " .. words_processed)
+	print("Total unique words: " .. count_table_entries(unigrams))
+
+	return unigrams
+end
+
+function Process_file(filename)
 	local file = io.open(filename, "r")
 	if not file then
 		print("Error: Could not open file " .. filename)
-		return
+		return {}
 	end
 
-	-- Read all words into an array preserving original order
-	local all_words = {}
-	local line_count = 0
-
-	for line in file:lines() do
-		line_count = line_count + 1
-		local word = line:lower():match("%S+")
-		if word then
-			table.insert(all_words, word)
-		end
-	end
-
-	-- DO NOT sort words - preserve the original frequency order from the file
-	-- The 20k.txt file already has words ordered by frequency (most common first)
-
-	-- Assign frequencies using position in the list (higher rank = lower frequency)
-	for rank, word in ipairs(all_words) do
-		-- Zipf's law: frequency is roughly proportional to 1/rank
-		local freq = math.floor(1000000 / rank)     -- Simple inverse relationship
-		if freq < 1 then freq = 1 end
-
-		unigrams[word] = freq
-
-		-- For debugging
-		if rank % 1000 == 0 or rank < 20 then
-			print(string.format("Assigning word '%s' (rank %d) frequency: %d", word, rank, freq))
-		end
-	end
-
-	-- Generate bigrams with derived frequencies
-	for i = 1, #all_words - 1 do
-		local w1 = all_words[i]
-		local w2 = all_words[i + 1]
-		local freq = math.floor(math.sqrt(unigrams[w1] * unigrams[w2] * 0.1))
-		if freq < 1 then freq = 1 end
-
-		local bigram = w1 .. " " .. w2
-		bigrams[bigram] = freq
-	end
-
+	local words = {}
+	local content = file:read("*all")
 	file:close()
-	print("Processed " .. #all_words .. " words with calculated frequencies")
+
+	-- Extract clean words from the content
+	return extract_words(content)
+end
+
+function count_table_entries(t)
+	local count = 0
+	for _ in pairs(t) do
+		count = count + 1
+	end
+	return count
 end
 
 function Save_binary(ngrams, filename)
@@ -106,11 +184,20 @@ function Save_binary(ngrams, filename)
 
 	-- Convert to sorted array for deterministic output
 	local sorted_items = {}
+	local total_entries = 0
+
 	for ngram, freq in pairs(ngrams) do
 		table.insert(sorted_items, { word = ngram, freq = freq })
+		total_entries = total_entries + 1
+
+		-- Report progress for large datasets
+		if total_entries % 100000 == 0 then
+			print(string.format("Prepared %d entries for sorting", total_entries))
+		end
 	end
 
 	-- Sort by frequency (highest first)
+	print("Sorting " .. #sorted_items .. " entries by frequency...")
 	table.sort(sorted_items, function(a, b) return a.freq > b.freq end)
 
 	-- Write header with count
@@ -121,13 +208,14 @@ function Save_binary(ngrams, filename)
 	print("Writing " .. count .. " entries to " .. filename)
 
 	-- Write each n-gram and its frequency in frequency order
+	local entries_written = 0
 	for _, item in ipairs(sorted_items) do
 		local ngram = item.word
 		local freq = item.freq
 
 		local len = #ngram
 		local len_ptr = ffi.new("uint16_t[1]", len)
-		file:write(ffi.string(len_ptr, 2))     -- Write the word length
+		file:write(ffi.string(len_ptr, 2)) -- Write the word length
 
 		-- Write the actual word string
 		file:write(ngram)
@@ -140,6 +228,11 @@ function Save_binary(ngrams, filename)
 		if freq > 10000 then
 			print(string.format("Writing high-freq word: '%s' with frequency: %d", ngram, freq))
 		end
+
+		entries_written = entries_written + 1
+		if entries_written % 100000 == 0 then
+			print(string.format("Wrote %d/%d entries", entries_written, count))
+		end
 	end
 
 	print("Top 10 highest frequency items:")
@@ -151,7 +244,7 @@ function Save_binary(ngrams, filename)
 	print("Finished writing " .. filename)
 end
 
--- Fix the Save_trie function to properly serialize the trie
+-- Serialize the trie structure
 function Save_trie(trie, filename)
 	local file = io.open(filename, "wb")
 	if not file then
@@ -165,8 +258,10 @@ function Save_trie(trie, filename)
 		count = count + 1
 	end
 	file:write(ffi.string(ffi.new("int32_t[1]", count), 4))
+	print("Serializing trie with " .. count .. " words...")
 
 	-- Serialize the trie structure using DFS
+	local nodes_processed = 0
 	local function serialize_node(node, prefix)
 		if node.is_word then
 			-- Write this word and its frequency
@@ -174,6 +269,11 @@ function Save_trie(trie, filename)
 			file:write(ffi.string(ffi.new("uint16_t[1]", word_len), 2))
 			file:write(prefix)
 			file:write(ffi.string(ffi.new("uint32_t[1]", node.frequency), 4))
+
+			nodes_processed = nodes_processed + 1
+			if nodes_processed % 10000 == 0 then
+				print(string.format("Serialized %d/%d words", nodes_processed, count))
+			end
 		end
 
 		-- Sort children for deterministic output
@@ -197,17 +297,29 @@ function Save_trie(trie, filename)
 end
 
 -- Main code execution starts here
-Process_corpus("20k.txt")
+print("Starting corpus processing...")
 
--- sort and output top n-grams
-print("Saving n-grams...")
+-- Process all text files in the corpus directory
+Process_corpus_directory("corpus")
+
+-- sort and output unigrams
+print("Saving unigrams...")
 Save_binary(unigrams, "unigrams.bin")
-Save_binary(bigrams, "bigrams.bin")
-Save_binary(trigrams, "trigrams.bin")
 
+-- Create and populate word trie
+print("Building word trie...")
 local word_trie = Trie.new()
+local word_count = 0
+local total_words = count_table_entries(unigrams)
+
 for word, freq in pairs(unigrams) do
 	word_trie:insert(word, freq)
+	word_count = word_count + 1
+
+	if word_count % 10000 == 0 then
+		print(string.format("Added %d/%d words to trie", word_count, total_words))
+		collectgarbage("step")
+	end
 end
 
 Save_trie(word_trie, "word_trie.bin")

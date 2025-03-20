@@ -5,7 +5,6 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	_ "path/filepath"
 	"strings"
 	"time"
 
@@ -15,10 +14,30 @@ import (
 func main() {
 	// Define command line flags
 	binaryDir := flag.String("binaries", "./binaries", "Directory containing binary dictionary files")
-	textDict := flag.String("text", "", "Path to text dictionary file (e.g. 20k.txt)")
+	textDict := flag.String("text", "", "Path to text dictionary file")
+	corpusDir := flag.String("corpus", "./corpus", "Path to corpus directory")
+	buildCorpus := flag.Bool("build", false, "Build dictionary from corpus")
 	exportBin := flag.String("export", "", "Export path for binary dictionary")
 	interactive := flag.Bool("interactive", true, "Run in interactive mode")
 	flag.Parse()
+
+	// Check if we should build from corpus
+	if *buildCorpus {
+		fmt.Printf("Building dictionaries from corpus in %s...\n", *corpusDir)
+		// You would call your Lua JIT builder here or use Go implementation
+		// For example, using os/exec:
+		/*
+			cmd := exec.Command("luajit", "builder.lua", *corpusDir)
+			cmd.Stdout = os.Stdout
+			cmd.Stderr = os.Stderr
+			if err := cmd.Run(); err != nil {
+				fmt.Printf("Error building dictionaries: %v\n", err)
+				return
+			}
+		*/
+		fmt.Println("To build dictionaries, please run 'luajit builder.lua' separately")
+		return
+	}
 
 	// Create a new completer
 	completer := completion.NewCompleter()
@@ -86,7 +105,7 @@ func runInteractive(completer *completion.Completer) {
 
 		// Get and display suggestions
 		start := time.Now()
-		suggestions := completer.Complete(input, 5)
+		suggestions := completer.Complete(input, 10)
 		elapsed := time.Since(start)
 
 		if len(suggestions) == 0 {
