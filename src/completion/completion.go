@@ -98,11 +98,6 @@ func (c *Completer) Complete(prefix string, limit int) []Suggestion {
 			fmt.Printf("Unknown item type: %T for word %s\n", item, p)
 		}
 
-		// Skip the exact match of the prefix
-		if string(p) == prefix {
-			return nil
-		}
-
 		// Skip low frequency words (likely garbage or typos in corpus)
 		if freq < minFrequencyThreshold {
 			return nil

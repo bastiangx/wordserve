@@ -1,158 +1,273 @@
 package fuzzy
 
 import (
+	"sort"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 )
-
-// MaxEditDistance defines how many character edits are allowed for a match
-const MaxEditDistance = 2
 
 // FuzzyMatcher handles approximate string matching
 type FuzzyMatcher struct {
-	dictionary map[string]bool
-	wordFreq   map[string]int
+	words    []string
+	wordFreq map[string]int
 }
 
 // NewFuzzyMatcher creates a new fuzzy matcher with a predefined dictionary
 func NewFuzzyMatcher(words map[string]int) *FuzzyMatcher {
-	fm := &FuzzyMatcher{
-		dictionary: make(map[string]bool, len(words)),
-		wordFreq:   words,
-	}
-
-	// Populate dictionary for O(1) lookups
+	// Extract all words into a slice for easier processing
+	wordList := make([]string, 0, len(words))
 	for word := range words {
-		fm.dictionary[word] = true
+		wordList = append(wordList, word)
 	}
 
-	return fm
+	return &FuzzyMatcher{
+		words:    wordList,
+		wordFreq: words,
+	}
 }
 
 // SuggestCorrection returns the most likely correction for a potentially misspelled word
 func (fm *FuzzyMatcher) SuggestCorrection(input string) (string, bool) {
-
-	// If the word is already in the dictionary, no correction needed
-	// But normalize case for exact matches
-	lowerInput := strings.ToLower(input)
-	for word := range fm.dictionary {
-		if strings.ToLower(word) == lowerInput {
-			return strings.ToLower(word), false
-		}
-	}
-
-	// For very short inputs, don't attempt correction as it's too unreliable
-	if len(input) < 3 {
+	// For very short inputs, don't attempt correction
+	if len(input) < 2 {
 		return input, false
 	}
 
-	// Look for similar words in the dictionary
-	bestMatch := ""
-	bestDistance := MaxEditDistance + 1
-	bestFreq := 0
+	// Convert to lowercase for case-insensitive comparison
+	lowerInput := strings.ToLower(input)
 
-	// Apply a length filter to reduce search space
-	minLen := len(input) - MaxEditDistance
-	if minLen < 3 {
-		minLen = 3
-	}
-	maxLen := len(input) + MaxEditDistance
-
-	for word, freq := range fm.wordFreq {
-		// Quick length check to skip obviously different words
-		wordLen := len(word)
-		if wordLen < minLen || wordLen > maxLen {
-			continue
-		}
-
-		// Check if first character matches (common heuristic to improve suggestions)
-		if len(word) > 0 && len(input) > 0 &&
-			!strings.EqualFold(string(word[0]), string(input[0])) {
-			continue
-		}
-
-		distance := levenshteinDistance(input, word)
-
-		// If we found an exact match, return it immediately
-		if distance == 0 {
-			return strings.ToLower(word), true
-		}
-
-		// Simplified priority logic
-		if distance <= MaxEditDistance {
-			// If we don't have a match yet or this has smaller distance
-			if bestMatch == "" || distance < bestDistance {
-				bestMatch = word
-				bestDistance = distance
-				bestFreq = freq
-			} else if distance == bestDistance {
-				// If distances are equal, always prefer more frequent words
-				if freq > bestFreq {
-					bestMatch = word
-					bestFreq = freq
-				}
-			}
+	// Check for exact match first (case insensitive)
+	for _, word := range fm.words {
+		if strings.ToLower(word) == lowerInput {
+			return strings.ToLower(word), false // Found exact match
 		}
 	}
 
-	// If we found a good match, return it
-	if bestMatch != "" {
-		return strings.ToLower(bestMatch), true
+	// Get matches
+	matches := fm.findMatches(lowerInput)
+
+	// Adjust scores based on frequency and length difference
+	for i := range matches {
+		// Add frequency bonus
+		if freq, ok := fm.wordFreq[matches[i].Str]; ok && freq > 0 {
+			// Log scale to prevent frequency from dominating
+			matches[i].Score += min(freq/10, 30)
+		}
+
+		// Penalize length difference
+		lengthDiff := abs(len(matches[i].Str) - len(input))
+		matches[i].Score -= lengthDiff * 2
 	}
 
-	// No good match found, return the original input
+	// Sort matches by score
+	sort.Slice(matches, func(i, j int) bool {
+		return matches[i].Score > matches[j].Score
+	})
+
+	// Return the best match if we have one
+	if len(matches) > 0 {
+		return strings.ToLower(matches[0].Str), true
+	}
+
+	// No good match found
 	return input, false
 }
 
-// levenshteinDistance calculates the minimum edit distance between two strings
-func levenshteinDistance(s1, s2 string) int {
-	// Convert to lowercase for case-insensitive comparison
-	s1 = strings.ToLower(s1)
-	s2 = strings.ToLower(s2)
+// Constants for scoring
+const (
+	firstCharMatchBonus            = 15
+	adjacentMatchBonus             = 10
+	separatorMatchBonus            = 12
+	camelCaseMatchBonus            = 12
+	unmatchedLeadingCharPenalty    = -3
+	maxUnmatchedLeadingCharPenalty = -9
+)
 
-	// Create a matrix of distances
-	rows := len(s1) + 1
-	cols := len(s2) + 1
-
-	// Initialize the matrix
-	matrix := make([][]int, rows)
-	for i := range matrix {
-		matrix[i] = make([]int, cols)
-		matrix[i][0] = i
-	}
-	for j := range matrix[0] {
-		matrix[0][j] = j
-	}
-
-	// Fill in the matrix
-	for i := 1; i < rows; i++ {
-		for j := 1; j < cols; j++ {
-			cost := 1
-			if s1[i-1] == s2[j-1] {
-				cost = 0
-			}
-
-			// Calculate minimum of three operations: insertion, deletion, substitution
-			matrix[i][j] = min(
-				matrix[i-1][j]+1,      // Deletion
-				matrix[i][j-1]+1,      // Insertion
-				matrix[i-1][j-1]+cost, // Substitution
-			)
-		}
-	}
-
-	return matrix[rows-1][cols-1]
+// Match represents a matched string with score
+type Match struct {
+	Str            string
+	Score          int
+	MatchedIndexes []int
 }
 
-// min returns the minimum of three integers
-func min(a, b, c int) int {
-	if a < b {
-		if a < c {
-			return a
+// findMatches is the core fuzzy matching algorithm adapted from the example_good.go
+func (fm *FuzzyMatcher) findMatches(pattern string) []Match {
+	if len(pattern) == 0 {
+		return nil
+	}
+
+	var matches []Match
+	patternRunes := []rune(pattern)
+
+	for _, candidate := range fm.words {
+		candidateLower := strings.ToLower(candidate)
+
+		// Skip if first character doesn't match and pattern is long enough
+		if len(pattern) > 1 && len(candidateLower) > 0 &&
+			pattern[0] != candidateLower[0] {
+			continue
 		}
-		return c
+
+		match := Match{
+			Str:            candidate,
+			Score:          0,
+			MatchedIndexes: make([]int, 0, len(patternRunes)),
+		}
+
+		// Try to match the pattern against the candidate
+		if fm.runFuzzyMatch(patternRunes, candidateLower, &match) {
+			// Apply additional penalties
+			penalty := len(match.MatchedIndexes) - len(candidateLower)
+			match.Score += penalty
+
+			matches = append(matches, match)
+		}
 	}
-	if b < c {
-		return b
+
+	return matches
+}
+
+// runFuzzyMatch tests if pattern matches the candidate string
+// and calculates a score. Returns true if there's a match.
+func (fm *FuzzyMatcher) runFuzzyMatch(pattern []rune, candidate string, match *Match) bool {
+	candidateRunes := []rune(candidate)
+
+	var last rune
+	var lastIndex int
+	var currAdjacentMatchBonus int
+	patternIndex := 0
+	bestScore := -1
+	matchedIndex := -1
+
+	// Scan the candidate string
+	for i := 0; i < len(candidateRunes); i++ {
+		curr := candidateRunes[i]
+
+		// Check if current rune matches the current pattern rune
+		if equalFold(curr, pattern[patternIndex]) {
+			score := 0
+
+			// First character match bonus
+			if i == 0 {
+				score += firstCharMatchBonus
+			}
+
+			// Camel case bonus (lowercase to uppercase transition)
+			if i > 0 && unicode.IsLower(last) && unicode.IsUpper(curr) {
+				score += camelCaseMatchBonus
+			}
+
+			// Separator bonus (match after a separator like space, dash, etc.)
+			if i > 0 && isSeparator(last) {
+				score += separatorMatchBonus
+			}
+
+			// Adjacent match bonus
+			if len(match.MatchedIndexes) > 0 {
+				lastMatch := match.MatchedIndexes[len(match.MatchedIndexes)-1]
+				bonus := 0
+				if lastIndex == lastMatch {
+					bonus = currAdjacentMatchBonus*2 + adjacentMatchBonus
+					currAdjacentMatchBonus = bonus
+				} else {
+					currAdjacentMatchBonus = 0
+				}
+				score += bonus
+			}
+
+			// Update best score if this match is better
+			if score > bestScore {
+				bestScore = score
+				matchedIndex = i
+			}
+
+			// Check if we should commit this match
+			var nextPatternRune rune
+			if patternIndex < len(pattern)-1 {
+				nextPatternRune = pattern[patternIndex+1]
+			}
+
+			var nextCandidateRune rune
+			if i < len(candidateRunes)-1 {
+				nextCandidateRune = candidateRunes[i+1]
+			}
+
+			if equalFold(nextPatternRune, nextCandidateRune) || nextCandidateRune == 0 {
+				if matchedIndex > -1 {
+					// Apply penalty for unmatched leading characters
+					if len(match.MatchedIndexes) == 0 {
+						penalty := matchedIndex * unmatchedLeadingCharPenalty
+						bestScore += max(penalty, maxUnmatchedLeadingCharPenalty)
+					}
+
+					match.Score += bestScore
+					match.MatchedIndexes = append(match.MatchedIndexes, matchedIndex)
+					bestScore = -1
+					patternIndex++
+				}
+			}
+		}
+
+		last = curr
+		lastIndex = i
+
+		// If we've matched all pattern characters, we have a full match
+		if patternIndex >= len(pattern) {
+			return true
+		}
 	}
-	return c
+
+	// Return true if we've matched all pattern characters
+	return patternIndex >= len(pattern)
+}
+
+// Helper function to check if a rune is a separator
+func isSeparator(r rune) bool {
+	return r == ' ' || r == '_' || r == '-' || r == '.' || r == '/'
+}
+
+// Helper function for case-insensitive rune equality
+func equalFold(a, b rune) bool {
+	if a == b {
+		return true
+	}
+
+	// Try simple ASCII case folding first (faster)
+	if a < utf8.RuneSelf && b < utf8.RuneSelf {
+		if 'A' <= a && a <= 'Z' {
+			a += 'a' - 'A'
+		}
+		if 'A' <= b && b <= 'Z' {
+			b += 'a' - 'A'
+		}
+		return a == b
+	}
+
+	// Use Unicode's more comprehensive case folding
+	return strings.EqualFold(string(a), string(b))
+}
+
+// abs returns the absolute value of x
+func abs(x int) int {
+	if x < 0 {
+		return -x
+	}
+	return x
+}
+
+// min returns the minimum of two integers
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+// max returns the maximum of two integers
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
