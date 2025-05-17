@@ -1,10 +1,13 @@
 package server
 
 import (
+	"bufio"
 	"encoding/json"
+	"fmt"
+	"io"
 	"log"
-	"net/http"
-	"strconv"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/bastiangx/typr-lib/src/completion"
@@ -33,113 +36,130 @@ type ErrorResponse struct {
 	Status int    `json:"status"`
 }
 
-// Server handles the HTTP requests for word completions
+// Request represents an incoming request from the client
+type Request struct {
+	Command string `json:"command"`
+	Prefix  string `json:"prefix"`
+	Limit   int    `json:"limit,omitempty"`
+	Fuzzy   bool   `json:"fuzzy,omitempty"`
+}
+
+// Server handles the IPC communication for word completions
 type Server struct {
 	completer *completion.Completer
-	port      string
+	reader    *bufio.Reader
+	writer    io.Writer
 }
 
-// NewServer creates a new completion server
-func NewServer(completer *completion.Completer, port string) *Server {
+// NewServer creates a new completion server using stdin/stdout for IPC
+func NewServer(completer *completion.Completer) *Server {
 	return &Server{
 		completer: completer,
-		port:      port,
+		reader:    bufio.NewReader(os.Stdin),
+		writer:    os.Stdout,
 	}
 }
 
-// Start begins listening for requests
+// Start begins listening for IPC requests
 func (s *Server) Start() error {
-	mux := http.NewServeMux()
+	log.Printf("Starting completion server using IPC")
 
-	// Add routes
-	mux.HandleFunc("/complete", s.handleComplete)
-	mux.HandleFunc("/health", s.handleHealth)
+	// Signal that the server is ready
+	s.sendResponse(map[string]string{"status": "ready"})
 
-	// Configure server
-	server := &http.Server{
-		Addr:         ":" + s.port,
-		Handler:      mux,
-		ReadTimeout:  5 * time.Second,
-		WriteTimeout: 10 * time.Second,
-		IdleTimeout:  120 * time.Second,
+	// Process incoming requests
+	for {
+		line, err := s.reader.ReadString('\n')
+		if err != nil {
+			if err == io.EOF {
+				log.Println("Client disconnected (EOF)")
+				return nil
+			}
+			log.Printf("Error reading from stdin: %v", err)
+			return err
+		}
+
+		// Trim the newline character
+		line = strings.TrimSpace(line)
+
+		// Process the request
+		s.handleRequest(line)
 	}
-
-	log.Printf("Starting completion server on port %s", s.port)
-	return server.ListenAndServe()
 }
 
-// handleHealth is a simple health check endpoint
-func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
-}
-
-// handleComplete handles completion requests
-func (s *Server) handleComplete(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-
-	// Only accept GET requests
-	if r.Method != http.MethodGet {
-		w.WriteHeader(http.StatusMethodNotAllowed)
-		json.NewEncoder(w).Encode(ErrorResponse{
-			Error:  "Method not allowed",
-			Status: http.StatusMethodNotAllowed,
-		})
+// handleRequest processes an incoming request string
+func (s *Server) handleRequest(requestStr string) {
+	// Parse the request JSON
+	var request Request
+	if err := json.Unmarshal([]byte(requestStr), &request); err != nil {
+		s.sendError("Invalid JSON request", 400)
 		return
 	}
 
-	// Get prefix from query parameter
-	prefix := r.URL.Query().Get("prefix")
+	// Process based on command
+	switch request.Command {
+	case "complete":
+		s.handleComplete(request)
+	case "health":
+		s.sendResponse(map[string]string{"status": "ok"})
+	default:
+		s.sendError(fmt.Sprintf("Unknown command: %s", request.Command), 400)
+	}
+}
+
+// sendResponse sends a JSON response to stdout
+func (s *Server) sendResponse(response interface{}) {
+	data, err := json.Marshal(response)
+	if err != nil {
+		log.Printf("Error marshaling response: %v", err)
+		s.sendError("Internal server error", 500)
+		return
+	}
+
+	// Write the response followed by a newline
+	fmt.Fprintln(s.writer, string(data))
+}
+
+// sendError sends an error response
+func (s *Server) sendError(message string, code int) {
+	errResponse := ErrorResponse{
+		Error:  message,
+		Status: code,
+	}
+	s.sendResponse(errResponse)
+}
+
+// handleComplete handles completion requests
+func (s *Server) handleComplete(request Request) {
+	prefix := request.Prefix
+
+	// Validate prefix
 	if prefix == "" {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(ErrorResponse{
-			Error:  "Missing 'prefix' parameter",
-			Status: http.StatusBadRequest,
-		})
+		s.sendError("Missing 'prefix' parameter", 400)
 		return
 	}
 
 	// Validate prefix length
 	if len(prefix) < 2 {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(ErrorResponse{
-			Error:  "Prefix must be at least 2 characters",
-			Status: http.StatusBadRequest,
-		})
+		s.sendError("Prefix must be at least 2 characters", 400)
 		return
 	}
 
 	if len(prefix) > 60 {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(ErrorResponse{
-			Error:  "Prefix exceeds maximum length of 60 characters",
-			Status: http.StatusBadRequest,
-		})
+		s.sendError("Prefix exceeds maximum length of 60 characters", 400)
 		return
 	}
 
-	// Get limit parameter (default to 10)
-	limitStr := r.URL.Query().Get("limit")
-	limit := 10
-	if limitStr != "" {
-		var err error
-		limit, err = strconv.Atoi(limitStr)
-		if err != nil || limit < 1 {
-			limit = 10
-		}
-	}
-
-	// Get fuzzy parameter (default to true)
-	fuzzyStr := r.URL.Query().Get("fuzzy")
-	useFuzzy := true
-	if fuzzyStr == "false" || fuzzyStr == "0" {
-		useFuzzy = false
+	// Set default limit if not specified
+	limit := request.Limit
+	if limit < 1 {
+		limit = 10
 	}
 
 	// Get suggestions with optional fuzzy matching
 	start := time.Now()
 	var suggestions []completion.Suggestion
-	if useFuzzy {
+	if request.Fuzzy {
 		suggestions = s.completer.CompleteWithFuzzy(prefix, limit)
 	} else {
 		suggestions = s.completer.Complete(prefix, limit)
@@ -167,7 +187,7 @@ func (s *Server) handleComplete(w http.ResponseWriter, r *http.Request) {
 		CorrectedPrefix: correctedPrefix,
 	}
 
-	json.NewEncoder(w).Encode(response)
+	s.sendResponse(response)
 }
 
 // normalizeRankings converts raw frequency values to a 1-10 scale
