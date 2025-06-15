@@ -1,8 +1,18 @@
+# ide
+.idea/
+.idea
+.vscode/
+# Golang
+*.sum
+# bin
 /target
 bin/
-pkg/
-wasm-pack.log
-
+# script builds
 corpus/
 corpus_stopwords/
+stpwrds/
 *.txt
+txt/
+# py env
+.venv
+.idea
