@@ -2,17 +2,18 @@
 .idea/
 .idea
 .vscode/
+
 # Golang
 *.sum
+
 # bin
 /target
 bin/
-# script builds
-corpus/
-corpus_stopwords/
-stpwrds/
-*.txt
-txt/
+data/unigrams.bin
+data/word_trie.bin
+
+# script related
+data/cleaned-texts/
+
 # py env
 .venv
-.idea
