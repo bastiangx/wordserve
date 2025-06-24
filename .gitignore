@@ -7,6 +7,7 @@
 *.sum
 
 # bin
+*.bin
 /target
 bin/
 data/unigrams.bin
