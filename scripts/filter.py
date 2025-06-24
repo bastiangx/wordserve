@@ -5,63 +5,14 @@
 
 import os
 import re
-import nltk
-from nltk.corpus import stopwords
 import argparse
 from tqdm import tqdm
 import multiprocessing
 import sys
 
 
-# nltk stopwords -- important
-def download_nltk_resources():
-    try:
-        nltk.data.find("corpora/stopwords")
-    except LookupError:
-        print("Downloading: nltk stopwords.")
-        try:
-            nltk.download("stopwords")
-        except Exception as e:
-            print(f"ERROR: Failed to download NLTK stopwords: {e}")
-            sys.exit(1)
-
-
 def get_stop_words():
-    try:
-        stop_words = set(stopwords.words("english"))
-    except Exception as e:
-        print(f"ERROR: Failed to load NLTK stopwords: {e}")
-        sys.exit(1)
-
-    # Common contractions marks
-    contractions = {
-        "im",
-        "youre",
-        "hes",
-        "shes",
-        "its",
-        "were",
-        "theyre",
-        "ill",
-        "youll",
-        "hell",
-        "shell",
-        "itll",
-        "well",
-        "theyll",
-        "cant",
-        "dont",
-        "wont",
-        "couldnt",
-        "shouldnt",
-        "wouldnt",
-        "ive",
-        "youve",
-        "weve",
-        "theyve",
-    }
-    stop_words.update(contractions)
-    return stop_words
+    return set()
 
 
 # Gibberish are explicitely malformed, short, or nonsensical words.
@@ -229,7 +180,6 @@ def main():
         sys.exit(1)
 
     # NLTK resources and load stop words
-    download_nltk_resources()
     stop_words = get_stop_words()
     print(f"Loaded {len(stop_words)} stop words")
 
