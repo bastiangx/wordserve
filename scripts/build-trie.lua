@@ -1,37 +1,59 @@
--- Builds a trie directly from a word frequency file
+-- Builds chunked trie binaries from a word frequency file for lazy loading
 -- Input: ../data/words.txt (format: "word <tab> frequency")
--- Output: ../data/word_trie.bin
+-- Output: Multiple binary files: ../data/dict_0001.bin, ../data/dict_0002.bin, etc.
+-- Each chunk contains a specified number of words (default: 10,000)
 -- Requires LuaJIT with FFI support
 
 local ffi = require("ffi")
 
 local verbose = false
 local show_help = false
+local chunk_size = 10000
+local max_chunks = 0 -- 0 means no limit
 
 for i = 1, #arg do
     if arg[i] == "-v" or arg[i] == "--verbose" then
         verbose = true
-        break
     elseif arg[i] == "-s" then
         verbose = false
-        break
     elseif arg[i] == "-h" or arg[i] == "--help" then
         show_help = true
         break
+    elseif arg[i] == "--chunk-size" and arg[i + 1] then
+        local num = tonumber(arg[i + 1])
+        if not num or num <= 0 then
+            print("Error: Invalid chunk size")
+            os.exit(1)
+        end
+        chunk_size = num
+    elseif arg[i] == "--max-chunks" and arg[i + 1] then
+        local num = tonumber(arg[i + 1])
+        if num == nil then
+            print("Error: Invalid max chunks")
+            os.exit(1)
+        end
+        max_chunks = num
+        if max_chunks < 0 then
+            print("Error: Invalid max chunks")
+            os.exit(1)
+        end
     end
 end
 
 if show_help then
     print("")
-    print("Usage: luajit build-trie.lua [ OPTIONS ]")
+    print("Usage: luajit build-chunked-trie.lua [ OPTIONS ]")
     print("")
-    print("Builds a trie directly from a word frequency file.")
+    print("Builds chunked trie binaries from a word frequency file for lazy loading.")
     print("Input: ../data/words.txt (format: 'word <tab> frequency')")
+    print("Output: Multiple binary files: ../data/dict_XXXX.bin")
     print("")
     print("Options:")
-    print("  -h, --help      Show this help message")
-    print("  -v, --verbose   Verbose output")
-    print("  -s              Silent mode (default)")
+    print("  -h, --help         Show this help message")
+    print("  -v, --verbose      Verbose output")
+    print("  -s                 Silent mode (default)")
+    print("  --chunk-size N     Words per chunk (default: 10000)")
+    print("  --max-chunks N     Maximum number of chunks (default: unlimited)")
     print("")
     print("Find out more at the source: https://github.com/bastiangx/typr-lib")
     os.exit(0)
@@ -78,19 +100,18 @@ function Count_table_entries(t)
     return count
 end
 
-
 -- Serialize the trie structure by traversing it
-function Save_trie(trie, filename, word_data)
+function Save_trie_chunk(trie, filename, word_data)
     local file = io.open(filename, "wb")
     if not file then
         err_print("Error: Could not create file " .. filename)
-        return
+        return false
     end
 
     -- Write the number of words
     local count = Count_table_entries(word_data)
     file:write(ffi.string(ffi.new("int32_t[1]", count), 4))
-    dbg_print("Serializing trie with " .. count .. " words...")
+    dbg_print("Serializing trie chunk with " .. count .. " words to " .. filename)
 
     -- Serialize the trie structure using DFS
     local nodes_processed = 0
@@ -103,8 +124,8 @@ function Save_trie(trie, filename, word_data)
             file:write(ffi.string(ffi.new("uint32_t[1]", node.frequency), 4))
 
             nodes_processed = nodes_processed + 1
-            if nodes_processed % 10000 == 0 then
-                dbg_print(string.format("Serialized %d/%d words", nodes_processed, count))
+            if verbose and nodes_processed % 5000 == 0 then
+                dbg_print(string.format("  Serialized %d/%d words", nodes_processed, count))
             end
         end
 
@@ -115,53 +136,93 @@ function Save_trie(trie, filename, word_data)
         end
         table.sort(keys)
 
-        -- each child node
+        -- Process each child node
         for _, char in ipairs(keys) do
             serialize_node(node.children[char], prefix .. char)
         end
     end
 
-    -- empty prefix for root node
+    -- Start with empty prefix for root node
     serialize_node(trie, "")
 
     file:close()
-    dbg_print("Trie successfully serialized at " .. filename)
+    dbg_print("Trie chunk successfully serialized: " .. filename)
+    return true
 end
 
--- Load frequencies and words from the new format
+-- Load frequencies and words from the frequency file
 -- Format: "word <tab> frequency"
 function Load_frequencies(file)
     local freq_data = {}
+    local word_list = {} -- To maintain order by frequency (highest first)
+
     for line in io.lines(file) do
         local word, freq = line:match("(.-)\t(%d+)")
         if word and freq then
-            freq_data[word] = tonumber(freq)
+            local frequency = tonumber(freq)
+            freq_data[word] = frequency
+            table.insert(word_list, { word = word, freq = frequency })
         end
     end
-    return freq_data
+
+    return freq_data, word_list
 end
 
--- Build trie from direct frequency file
-dbg_print("Building trie from frequencies file...")
-local words_with_frequencies = Load_frequencies("../data/words.txt")
+-- Main processing
+dbg_print("Building chunked tries from frequencies file...")
+local words_with_frequencies, word_list = Load_frequencies("../data/words.txt")
 
 if not words_with_frequencies or Count_table_entries(words_with_frequencies) == 0 then
     err_print("Error: Failed to load frequencies from ../data/words.txt")
     os.exit(1)
 end
 
--- Create and populate trie
-local word_trie = Trie.new()
-dbg_print("Building word trie...")
-local word_count = 0
+local total_words = #word_list
+dbg_print(string.format("Loaded %d words total", total_words))
 
-for word, freq in pairs(words_with_frequencies) do
-    word_trie:insert(word, freq)
-    word_count = word_count + 1
-    if word_count % 10000 == 0 then
-        dbg_print(string.format("Added %d words to the trie", word_count))
-        collectgarbage("step")
-    end
+-- Calculate number of chunks needed
+local total_chunks = math.ceil(total_words / chunk_size)
+if max_chunks > 0 and total_chunks > max_chunks then
+    total_chunks = max_chunks
+    dbg_print(string.format("Limiting to %d chunks as requested (for testing)", max_chunks))
+else
+    dbg_print(string.format("Building all chunks needed for %d words", total_words))
 end
 
-Save_trie(word_trie, "../data/word_trie.bin", words_with_frequencies)
+dbg_print(string.format("Creating %d chunks of ~%d words each", total_chunks, chunk_size))
+
+-- Process chunks
+for chunk_idx = 1, total_chunks do
+    local start_idx = (chunk_idx - 1) * chunk_size + 1
+    local end_idx = math.min(chunk_idx * chunk_size, total_words)
+
+    if start_idx > total_words then
+        break
+    end
+
+    dbg_print(string.format("Processing chunk %d/%d (words %d-%d)", chunk_idx, total_chunks, start_idx, end_idx))
+
+    -- Create trie for this chunk
+    local chunk_trie = Trie.new()
+    local chunk_words = {}
+
+    for i = start_idx, end_idx do
+        local word_entry = word_list[i]
+        if word_entry then
+            chunk_trie:insert(word_entry.word, word_entry.freq)
+            chunk_words[word_entry.word] = word_entry.freq
+        end
+    end
+
+    -- Save this chunk
+    local chunk_filename = string.format("../data/dict_%04d.bin", chunk_idx)
+    if not Save_trie_chunk(chunk_trie, chunk_filename, chunk_words) then
+        err_print("Failed to save chunk " .. chunk_idx)
+        os.exit(1)
+    end
+
+    -- Force garbage collection between chunks
+    collectgarbage("collect")
+end
+
+dbg_print(string.format("Successfully created %d trie chunks", total_chunks))
