@@ -43,7 +43,6 @@ type Request struct {
 	Command string `json:"command"`
 	Prefix  string `json:"prefix"`
 	Limit   int    `json:"limit,omitempty"`
-	Fuzzy   bool   `json:"fuzzy,omitempty"`
 }
 
 // Server handles the IPC for word completions
@@ -154,6 +153,21 @@ func (s *Server) handleComplete(request Request) {
 		return
 	}
 
+	// Validate input - reject numbers and special characters
+	if !utils.IsValidInput(prefix) {
+		log.Warnf("prefix %s is not a valid input", prefix)
+		response := CompletionResponse{
+			Suggestions:     []ResponseSuggestion{},
+			Count:           0,
+			Prefix:          prefix,
+			TimeTaken:       0,
+			WasCorrected:    false,
+			CorrectedPrefix: "",
+		}
+		s.sendResponse(response)
+		return
+	}
+
 	limit := request.Limit
 	if limit < 1 {
 		limit = 10
@@ -161,11 +175,8 @@ func (s *Server) handleComplete(request Request) {
 
 	start := time.Now()
 	var suggestions []completion.Suggestion
-	if request.Fuzzy {
-		suggestions = s.completer.CompleteWithFuzzy(prefix, limit)
-	} else {
-		suggestions = s.completer.Complete(prefix, limit)
-	}
+	// Use normal fast radix trie completion
+	suggestions = s.completer.Complete(prefix, limit)
 	elapsed := time.Since(start)
 
 	ranks := utils.GeneratePositionalRanks(len(suggestions))
