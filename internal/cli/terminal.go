@@ -1,3 +1,4 @@
+// Package cli provides a simple CLI input handler for debugging in real-time and the completion functionality
 package cli
 
 import (
@@ -7,7 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/bastiangx/typr-lib/pkg/completion"
+	"github.com/bastiangx/typr-lib/internal/utils"
+	completion "github.com/bastiangx/typr-lib/pkg/suggest"
 	"github.com/charmbracelet/log"
 )
 
@@ -17,17 +19,17 @@ type InputHandler struct {
 	minPrefixLength int
 	maxPrefixLength int
 	suggestLimit    int
-	useFuzzy        bool
+	noFilter        bool // If true, bypasses all input filtering for debugging
 }
 
 // NewInputHandler creates a new CLI input handler
-func NewInputHandler(completer *completion.Completer, minLength, maxLength, limit int, fuzzy bool) *InputHandler {
+func NewInputHandler(completer *completion.Completer, minLength, maxLength, limit int, noFilter bool) *InputHandler {
 	return &InputHandler{
 		completer:       completer,
 		minPrefixLength: minLength,
 		maxPrefixLength: maxLength,
 		suggestLimit:    limit,
-		useFuzzy:        fuzzy,
+		noFilter:        noFilter,
 	}
 }
 
@@ -65,17 +67,22 @@ func (h *InputHandler) handleInput(prefix string) {
 		return
 	}
 
+	// Apply input filtering by default (unless --no-filter is used)
+	if !h.noFilter {
+		if !utils.IsValidInput(prefix) {
+			log.Warnf("No suggestions found for prefix: '%s' (filtered out)", prefix)
+			return
+		}
+	} else {
+		log.Debug("Input filtering disabled - allowing all inputs")
+	}
+
 	start := time.Now()
 	var suggestions []completion.Suggestion
 
-	log.Debug("Processing completion request", "prefix", prefix, "fuzzy", h.useFuzzy)
+	log.Debug("Processing completion request", "prefix", prefix)
 
-	if h.useFuzzy {
-		log.Debug("Used Fuzzy matcher")
-		suggestions = h.completer.CompleteWithFuzzy(prefix, h.suggestLimit)
-	} else {
-		suggestions = h.completer.Complete(prefix, h.suggestLimit)
-	}
+	suggestions = h.completer.Complete(prefix, h.suggestLimit)
 
 	elapsed := time.Since(start)
 
