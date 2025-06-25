@@ -26,7 +26,6 @@ func sigHandler() {
 
 func main() {
 	sigHandler()
-	// exportBin := flag.String("export", "", "Export path for binary dictionary file")
 	binaryDir := flag.String("data", "data/", "Directory containing typer's resource binary files (default: data/)")
 	debugMode := flag.Bool("d", false, "Toggle debug mode")
 	cliMode := flag.Bool("c", false, "Run in CLI input handler mode")
@@ -34,6 +33,9 @@ func main() {
 	minPrefix := flag.Int("prmin", 1, "Minimum prefix length for suggestions (default: 1)")
 	maxPrefix := flag.Int("prmax", 24, "Maximum prefix length for suggestions (default: 24)")
 	noFilter := flag.Bool("no-filter", false, "Disable input filtering (for debugging - shows all dictionary entries)")
+	// Lazy loading options
+	wordLimit := flag.Int("words", 50000, "Maximum number of words to load (default: 50000, use 0 for all words)")
+	chunkSize := flag.Int("chunk", 10000, "Number of words per chunk for lazy loading (default: 10000)")
 
 	flag.Parse()
 
@@ -46,17 +48,18 @@ func main() {
 		log.SetLevel(log.ErrorLevel)
 	}
 
-	// TODO: newCompleter doesnt return any errors too and should be modified.
-	completer := completion.NewCompleter()
+	// Create lazy completer with the specified limits
+	log.Debugf("Initializing lazy completer: maxWords=%d, chunkSize=%d", *wordLimit, *chunkSize)
+	completer := completion.NewLazyCompleter(*binaryDir, *chunkSize, *wordLimit)
 
 	if *binaryDir != "" {
-		log.Debug("Loading tries | ngrams from", "dir", *binaryDir)
-		err := completer.LoadAllBinaries(*binaryDir)
+		log.Debug("Initializing lazy loading from", "dir", *binaryDir, "maxWords", *wordLimit)
+		err := completer.Initialize()
 		if err != nil {
-			log.Fatalf("Binaries not found: %v", err)
+			log.Fatalf("Failed to initialize lazy completer: %v", err)
 			os.Exit(1)
 		}
-		log.Debug("Binary dictionaries loaded successfully")
+		log.Debug("Lazy completer initialized successfully")
 	} else {
 		log.Warn("No binary directory specified, running with empty dict")
 	}
@@ -82,14 +85,4 @@ func main() {
 		log.Fatalf("Failed to start server: %v", err)
 		os.Exit(1)
 	}
-
-	// if *exportBin != "" {
-	// 	fmt.Fprintf(os.Stderr, "Exporting binary dictionary to %s...\n", *exportBin)
-	// 	if err := completer.SaveBinaryDictionary(*exportBin); err != nil {
-	// 		fmt.Fprintf(os.Stderr, "Error exporting binary dictionary: %v\n", err)
-	// 	} else {
-	// 		fmt.Fprintf(os.Stderr, "Binary dictionary exported successfully\n")
-	// 	}
-	// }
-
 }
