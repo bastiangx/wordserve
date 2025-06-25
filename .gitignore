@@ -1,8 +1,21 @@
+# ide
+.idea/
+.idea
+.vscode/
+
+# Golang
+*.sum
+
+# bin
+*.bin
 /target
 bin/
-pkg/
-wasm-pack.log
+data/unigrams.bin
+data/word_trie.bin
 
-corpus/
-corpus_stopwords/
-*.txt
+# script related
+data/cleaned-texts/
+
+# py env
+.venv
+todo.md
