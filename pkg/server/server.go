@@ -47,13 +47,13 @@ type Request struct {
 
 // Server handles the IPC for word completions
 type Server struct {
-	completer *completion.Completer
+	completer completion.ICompleter
 	reader    *bufio.Reader
 	writer    io.Writer
 }
 
 // Creates a new completion server using stdin/stdout for IPC
-func NewServer(completer *completion.Completer) *Server {
+func NewServer(completer completion.ICompleter) *Server {
 	return &Server{
 		completer: completer,
 		reader:    bufio.NewReader(os.Stdin),

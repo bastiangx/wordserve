@@ -15,7 +15,7 @@ import (
 
 // InputHandler handles CLI input for testing completion functionality
 type InputHandler struct {
-	completer       *completion.Completer
+	completer       completion.ICompleter
 	minPrefixLength int
 	maxPrefixLength int
 	suggestLimit    int
@@ -23,7 +23,7 @@ type InputHandler struct {
 }
 
 // NewInputHandler creates a new CLI input handler
-func NewInputHandler(completer *completion.Completer, minLength, maxLength, limit int, noFilter bool) *InputHandler {
+func NewInputHandler(completer completion.ICompleter, minLength, maxLength, limit int, noFilter bool) *InputHandler {
 	return &InputHandler{
 		completer:       completer,
 		minPrefixLength: minLength,
