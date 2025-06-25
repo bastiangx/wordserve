@@ -1,5 +1,6 @@
--- Builds a trie from the unigrams.bin file
--- Run `build-ngrams.lua` first to generate unigrams.bin
+-- Builds a trie directly from a word frequency file
+-- Input: ../data/words.txt (format: "word <tab> frequency")
+-- Output: ../data/word_trie.bin
 -- Requires LuaJIT with FFI support
 
 local ffi = require("ffi")
@@ -24,8 +25,8 @@ if show_help then
     print("")
     print("Usage: luajit build-trie.lua [ OPTIONS ]")
     print("")
-    print("Builds a trie from the unigrams.bin file.")
-    print("Run 'build-ngrams.lua' first to generate the unigrams.bin")
+    print("Builds a trie directly from a word frequency file.")
+    print("Input: ../data/words.txt (format: 'word <tab> frequency')")
     print("")
     print("Options:")
     print("  -h, --help      Show this help message")
@@ -77,80 +78,17 @@ function Count_table_entries(t)
     return count
 end
 
-function Load_unigrams(filename)
-    local unigrams = {}
-    local file = io.open(filename, "rb")
-    if not file then
-        err_print("Error: Could not find unigram file " .. filename)
-        err_print("Please run $ luajit build-ngram.lua first to generate unigrams.bin")
-        return unigrams
-    end
-
-    -- header--first 4 bytes contains the number of unigrams
-    local count_bytes = file:read(4)
-    if not count_bytes or #count_bytes < 4 then
-        err_print("Error: Invalid unigram file header or corrupted file!")
-        file:close()
-        return unigrams
-    end
-
-    local count_ptr = ffi.cast("int32_t*", ffi.new("char[4]", count_bytes))
-    local count = count_ptr[0]
-
-    dbg_print("Reading " .. count .. " unigrams from " .. filename)
-
-    local entries_read = 0
-    for i = 1, count do
-        -- Read word length
-        local len_bytes = file:read(2)
-        if not len_bytes or #len_bytes < 2 then
-            err_print("Error: Unexpected EOF in unigram file at entry " .. i)
-            break
-        end
-
-        local len_ptr = ffi.cast("uint16_t*", ffi.new("char[2]", len_bytes))
-        local word_len = len_ptr[0]
-
-        -- Read word
-        local word = file:read(word_len)
-        if not word or #word < word_len then
-            err_print("Error: Unexpected EOF in unigram file at entry " .. i)
-            break
-        end
-
-        -- Read frequency
-        local freq_bytes = file:read(4)
-        if not freq_bytes or #freq_bytes < 4 then
-            err_print("Error: Unexpected EOF in unigram file at entry " .. i)
-            break
-        end
-
-        local freq_ptr = ffi.cast("uint32_t*", ffi.new("char[4]", freq_bytes))
-        local freq = freq_ptr[0]
-
-        unigrams[word] = freq
-        entries_read = entries_read + 1
-
-        if entries_read % 100000 == 0 then
-            dbg_print(string.format("Read %d/%d entries", entries_read, count))
-        end
-    end
-
-    file:close()
-    dbg_print("Loaded " .. entries_read .. " unigrams")
-    return unigrams
-end
 
 -- Serialize the trie structure by traversing it
-function Save_trie(trie, filename, unigrams)
+function Save_trie(trie, filename, word_data)
     local file = io.open(filename, "wb")
     if not file then
         err_print("Error: Could not create file " .. filename)
         return
     end
 
-    -- Write the number of unigrams
-    local count = Count_table_entries(unigrams)
+    -- Write the number of words
+    local count = Count_table_entries(word_data)
     file:write(ffi.string(ffi.new("int32_t[1]", count), 4))
     dbg_print("Serializing trie with " .. count .. " words...")
 
@@ -190,28 +128,40 @@ function Save_trie(trie, filename, unigrams)
     dbg_print("Trie successfully serialized at " .. filename)
 end
 
-dbg_print("Building trie from unigrams.bin...")
-local unigrams = Load_unigrams("../data/unigrams.bin")
-if not unigrams or Count_table_entries(unigrams) == 0 then
-    err_print("Error: Failed to load unigrams from ../data/unigrams.bin")
-    err_print("run $ luajit build-ngram.lua first to generate the unigrams file")
+-- Load frequencies and words from the new format
+-- Format: "word <tab> frequency"
+function Load_frequencies(file)
+    local freq_data = {}
+    for line in io.lines(file) do
+        local word, freq = line:match("(.-)\t(%d+)")
+        if word and freq then
+            freq_data[word] = tonumber(freq)
+        end
+    end
+    return freq_data
+end
+
+-- Build trie from direct frequency file
+dbg_print("Building trie from frequencies file...")
+local words_with_frequencies = Load_frequencies("../data/words.txt")
+
+if not words_with_frequencies or Count_table_entries(words_with_frequencies) == 0 then
+    err_print("Error: Failed to load frequencies from ../data/words.txt")
     os.exit(1)
 end
 
--- Populate the word trie
-dbg_print("Building word trie...")
+-- Create and populate trie
 local word_trie = Trie.new()
+dbg_print("Building word trie...")
 local word_count = 0
-local total_words = Count_table_entries(unigrams)
 
-for word, freq in pairs(unigrams) do
+for word, freq in pairs(words_with_frequencies) do
     word_trie:insert(word, freq)
     word_count = word_count + 1
-
     if word_count % 10000 == 0 then
-        dbg_print(string.format("Added %d/%d words to trie", word_count, total_words))
+        dbg_print(string.format("Added %d words to the trie", word_count))
         collectgarbage("step")
     end
 end
 
-Save_trie(word_trie, "../data/word_trie.bin", unigrams)
+Save_trie(word_trie, "../data/word_trie.bin", words_with_frequencies)
