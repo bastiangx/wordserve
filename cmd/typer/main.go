@@ -8,8 +8,8 @@ import (
 	"syscall"
 
 	"github.com/bastiangx/typr-lib/internal/cli"
-	"github.com/bastiangx/typr-lib/pkg/completion"
 	"github.com/bastiangx/typr-lib/pkg/server"
+	completion "github.com/bastiangx/typr-lib/pkg/suggest"
 	"github.com/charmbracelet/log"
 )
 
@@ -26,18 +26,19 @@ func sigHandler() {
 
 func main() {
 	sigHandler()
-
 	// exportBin := flag.String("export", "", "Export path for binary dictionary file")
-	binaryDir := flag.String("data", "data/", "Directory containing data binary files")
-	debugMode := flag.Bool("debug", false, "Toggle debug mode")
-	cliMode := flag.Bool("cli", false, "Run in CLI input handler mode")
-	minPrefix := flag.Int("min", 1, "Minimum prefix length for suggestions")
-	maxPrefix := flag.Int("max", 60, "Maximum prefix length for suggestions")
-	limit := flag.Int("limit", 10, "Maximum number of suggestions to return")
-	fuzzy := flag.Bool("fuzzy", false, "Use fuzzy matching for suggestions")
+	binaryDir := flag.String("data", "data/", "Directory containing typer's resource binary files (default: data/)")
+	debugMode := flag.Bool("d", false, "Toggle debug mode")
+	cliMode := flag.Bool("c", false, "Run in CLI input handler mode")
+	limit := flag.Int("limit", 24, "Number of suggestions to return (default: 24)")
+	minPrefix := flag.Int("prmin", 1, "Minimum prefix length for suggestions (default: 1)")
+	maxPrefix := flag.Int("prmax", 24, "Maximum prefix length for suggestions (default: 24)")
+	noFilter := flag.Bool("no-filter", false, "Disable input filtering (for debugging - shows all dictionary entries)")
 
 	flag.Parse()
 
+	// debugmode wip -- neds logic checks in the other packages
+	// needs to be gloabl var for package. read TODO on how
 	if *debugMode {
 		log.SetLevel(log.DebugLevel)
 		log.SetReportTimestamp(false)
@@ -45,7 +46,7 @@ func main() {
 		log.SetLevel(log.ErrorLevel)
 	}
 
-	// TODO: newCompleter doesnt return any errors too and should be added.
+	// TODO: newCompleter doesnt return any errors too and should be modified.
 	completer := completion.NewCompleter()
 
 	if *binaryDir != "" {
@@ -55,7 +56,6 @@ func main() {
 			log.Fatalf("Binaries not found: %v", err)
 			os.Exit(1)
 		}
-		completer.InitFuzzyMatcher()
 		log.Debug("Binary dictionaries loaded successfully")
 	} else {
 		log.Warn("No binary directory specified, running with empty dict")
@@ -66,9 +66,9 @@ func main() {
 			"minPrefix", *minPrefix,
 			"maxPrefix", *maxPrefix,
 			"limit", *limit,
-			"fuzzy", *fuzzy)
+			"noFilter", *noFilter)
 
-		inputHandler := cli.NewInputHandler(completer, *minPrefix, *maxPrefix, *limit, *fuzzy)
+		inputHandler := cli.NewInputHandler(completer, *minPrefix, *maxPrefix, *limit, *noFilter)
 		if err := inputHandler.Start(); err != nil {
 			log.Fatalf("CLI input handler error: %v", err)
 			os.Exit(1)
@@ -76,7 +76,7 @@ func main() {
 		return
 	}
 
-	log.Debug("Starting IPC listener")
+	log.Debug("spawning IPC processor")
 	srv := server.NewServer(completer)
 	if err := srv.Start(); err != nil {
 		log.Fatalf("Failed to start server: %v", err)
