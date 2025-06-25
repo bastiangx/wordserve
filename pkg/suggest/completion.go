@@ -1,19 +1,36 @@
 package suggest
 
 import (
-	"bufio"
-	"encoding/binary"
-	"io"
-	"os"
 	"sort"
 	"strings"
 	"sync"
 
 	"github.com/bastiangx/typr-lib/internal/utils"
+	"github.com/bastiangx/typr-lib/pkg/dictionary"
 	"github.com/charmbracelet/log"
 
 	"github.com/tchap/go-patricia/v2/patricia"
 )
+
+// String interning for memory optimization
+var (
+	stringPool = sync.Map{} // intern strings to reduce memory
+	wordBufferPool = sync.Pool{
+		New: func() interface{} {
+			buf := make([]byte, 64) // Pre-allocate 64 bytes
+			return &buf
+		},
+	}
+)
+
+// internString reduces memory usage by reusing identical strings
+func internString(s string) string {
+	if cached, exists := stringPool.Load(s); exists {
+		return cached.(string)
+	}
+	stringPool.Store(s, s)
+	return s
+}
 
 // Suggestion represents a word completion suggestion with its frequency
 type Suggestion struct {
@@ -30,23 +47,29 @@ type Completer struct {
 	totalWords   int
 	maxFrequency int
 	wordFreqs    map[string]int
+	chunkLoader  *dictionary.ChunkLoader
 }
 
-// WordBufferPool is a pool of byte slices for word completions
-var wordBufferPool = sync.Pool{
-	New: func() any {
-		buffer := make([]byte, 64)
-		return &buffer
-	},
-}
-
-// NewCompleter initializes a new word completer
+// NewCompleter creates a completer (legacy - use NewLazyCompleter instead)
 func NewCompleter() *Completer {
 	return &Completer{
 		trie:         patricia.NewTrie(),
 		totalWords:   0,
 		maxFrequency: 0,
 		wordFreqs:    make(map[string]int),
+	}
+}
+
+// NewLazyCompleter creates a new completer with dictionary loading
+func NewLazyCompleter(dirPath string, chunkSize, maxWords int) *Completer {
+	loader := dictionary.NewChunkLoader(dirPath, chunkSize, maxWords)
+
+	return &Completer{
+		trie:         patricia.NewTrie(),
+		totalWords:   0,
+		maxFrequency: 0,
+		wordFreqs:    make(map[string]int),
+		chunkLoader:  loader,
 	}
 }
 
@@ -62,6 +85,12 @@ func (c *Completer) AddWord(word string, frequency int) {
 
 // Complete returns suggestions for a given prefix with optional frequency threshold
 func (c *Completer) Complete(prefix string, limit int) []Suggestion {
+	// Get the active trie (either our own or from chunk loader)
+	activeTrie := c.trie
+	if c.chunkLoader != nil {
+		activeTrie = c.chunkLoader.GetTrie()
+	}
+	
 	// Extract lowercase prefix for trie lookup
 	lowerPrefix := strings.ToLower(prefix)
 
@@ -81,7 +110,14 @@ func (c *Completer) Complete(prefix string, limit int) []Suggestion {
 	var suggestions []Suggestion
 
 	// Visit subtree and collect
-	err := c.trie.VisitSubtree(patricia.Prefix(lowerPrefix), func(p patricia.Prefix, item patricia.Item) error {
+	err := activeTrie.VisitSubtree(patricia.Prefix(lowerPrefix), func(p patricia.Prefix, item patricia.Item) error {
+		word := string(p)
+		
+		// Skip exact matches (both lowercase) to avoid duplicating the input
+		if word == lowerPrefix {
+			return nil
+		}
+		
 		var freq int = 1
 
 		switch v := item.(type) {
@@ -100,8 +136,6 @@ func (c *Completer) Complete(prefix string, limit int) []Suggestion {
 		if freq < minFrequencyThreshold {
 			return nil
 		}
-
-		word := string(p)
 
 		// Apply original capitalization pattern to the word
 		if len(capitalPositions) > 0 {
@@ -150,181 +184,73 @@ func (c *Completer) Complete(prefix string, limit int) []Suggestion {
 	return uniqueSuggestions
 }
 
-// LoadBinaryDictionary loads a binary n-gram dictionary file
-// Format: 4 bytes count header + (2 bytes length + string word + 4 bytes frequency) repeated
-// TODO: move to `pkg/dictionary/loader.go` and rename the func
+// LoadBinaryDictionary - interface compatibility (no-op, use Initialize instead)
 func (c *Completer) LoadBinaryDictionary(filename string) error {
-	file, err := os.Open(filename)
-	if err != nil {
-		log.Fatalf("Failed to open binary dictionary file: %v", err)
+	return c.Initialize()
+}
+
+// Initialize initializes the completer
+func (c *Completer) Initialize() error {
+	if c.chunkLoader != nil {
+		// Start chunk loading
+		if err := c.chunkLoader.StartLazyLoading(); err != nil {
+			return err
+		}
+		// Update trie and word frequencies from the loader as chunks load
+		c.syncFromLoader()
+		return nil
 	}
-	defer func(file *os.File) {
-		err := file.Close()
-		if err != nil {
-			log.Errorf("closing file: %v", err)
-		}
-	}(file)
-
-	fileInfo, err := file.Stat()
-	if err != nil {
-		log.Fatalf("Failed to get file info: %v", err)
-	}
-
-	if fileInfo.Size() < 4 {
-		log.Fatalf("Binary dictionary file is too small: %s", filename)
-	}
-
-	// Create binary reader
-	reader := bufio.NewReader(file)
-
-	// Read the header (count of entries)
-	var totalEntries int32
-	if err := binary.Read(reader, binary.LittleEndian, &totalEntries); err != nil {
-		log.Fatalf("Reading total entries from binary file: %v", err)
-	}
-	log.Debugf("Total entries in binary dictionary: %d", totalEntries)
-
-	count := 0
-
-	for count < int(totalEntries) {
-		// Read word length (2 bytes)
-		var wordLen uint16
-		if err := binary.Read(reader, binary.LittleEndian, &wordLen); err != nil {
-			if err == io.EOF {
-				break
-			}
-			log.Errorf("Reading word length: %v", err)
-		}
-
-		// Read the word
-		var wordBytes []byte
-		bufPtr := wordBufferPool.Get().(*[]byte)
-		buffer := *bufPtr
-
-		if cap(buffer) >= int(wordLen) {
-			wordBytes = buffer[:wordLen]
-		} else {
-			// If the pooled buffer is too small, allocate a new one
-			wordBytes = make([]byte, wordLen)
-		}
-
-		_, err = io.ReadFull(reader, wordBytes)
-		if err != nil {
-			wordBufferPool.Put(bufPtr)
-			log.Errorf("Reading word bytes: %v", err)
-		}
-		word := string(wordBytes)
-
-		// Return the buffer to the pool
-		wordBufferPool.Put(bufPtr)
-
-		// Read frequency (4 bytes)
-		var freq uint32
-		if err := binary.Read(reader, binary.LittleEndian, &freq); err != nil {
-			log.Errorf("Reading frequency for word %s: %v", word, err)
-		}
-
-		// Add word to trie with actual frequency, not the default 1
-		if freq > 0 {
-			c.AddWord(word, int(freq))
-		} else {
-			// Fallback if frequency is somehow zero
-			c.AddWord(word, 1)
-		}
-		count++
-	}
-
-	log.Debugf("Loaded %d entries from binary dictionary: %s", count, filename)
 	return nil
 }
 
-// LoadAllBinaries loads the word trie binary dictionary
-// TODO: move to `pkg/dictionary/loader.go` and rename the func
+// syncFromLoader synchronizes data from the chunk loader
+func (c *Completer) syncFromLoader() {
+	if c.chunkLoader != nil {
+		c.trie = c.chunkLoader.GetTrie()
+		c.wordFreqs = c.chunkLoader.GetWordFreqs()
+		stats := c.chunkLoader.GetStats()
+		c.totalWords = stats.TotalWords
+		c.maxFrequency = stats.MaxFrequency
+	}
+}
+
+// LoadAllBinaries - interface compatibility (no-op, use Initialize instead)
 func (c *Completer) LoadAllBinaries(dirPath string) error {
-	// Only load the word trie - it contains both words and frequencies
-	wordTriePath := dirPath + "/word_trie.bin"
-	if _, err := os.Stat(wordTriePath); err == nil {
-		if err := c.LoadBinaryDictionary(wordTriePath); err != nil {
-			log.Fatalf("failed to load word trie: %v", err)
-		}
-	} else {
-		log.Warnf("Word trie file not found at: %s", wordTriePath)
-		return err
-	}
-
-	return nil
+	return c.Initialize()
 }
 
-// SaveBinaryDictionary exports the trie content to a binary file for persistence
-// TODO: move to `pkg/dictionary/binaries.go` and rename the func
-func (c *Completer) SaveBinaryDictionary(filename string) error {
-	file, err := os.Create(filename)
-	if err != nil {
-		log.Errorf("Creating binary file: %v", err)
+// RequestMoreWords requests loading of additional words
+func (c *Completer) RequestMoreWords(additionalWords int) error {
+	if c.chunkLoader != nil {
+		return c.chunkLoader.RequestMoreChunks(additionalWords)
 	}
-	defer func(file *os.File) {
-		err := file.Close()
-		if err != nil {
-			log.Errorf("Closing binary file: %v", err)
-		}
-	}(file)
+	return nil // No-op if no chunk loader
+}
 
-	// count entries first
-	count := 0
-	err = c.trie.Visit(func(prefix patricia.Prefix, item patricia.Item) error {
-		count++
-		return nil
-	})
-	if err != nil {
-		log.Errorf("Counting entries in trie: %v", err)
+// Stop stops the lazy loading process
+func (c *Completer) Stop() {
+	if c.chunkLoader != nil {
+		c.chunkLoader.Stop()
 	}
-
-	writer := bufio.NewWriter(file)
-	defer func(writer *bufio.Writer) {
-		err := writer.Flush()
-		if err != nil {
-			log.Errorf("Flushing writer: %v", err)
-		}
-	}(writer)
-
-	// Write header (count of entries)
-	if err := binary.Write(writer, binary.LittleEndian, int32(count)); err != nil {
-		log.Errorf("Writing header: %v", err)
-	}
-
-	// Write entries
-	err = c.trie.Visit(func(prefix patricia.Prefix, item patricia.Item) error {
-		word := string(prefix)
-		wordLen := uint16(len(word))
-
-		// Write word length (2 bytes)
-		if err := binary.Write(writer, binary.LittleEndian, wordLen); err != nil {
-			log.Errorf("Writing word length: %v", err)
-		}
-
-		// Write word
-		if _, err := writer.WriteString(word); err != nil {
-			log.Errorf("Writing word %s: %v", word, err)
-		}
-
-		// Write frequency (4 bytes)
-		freq := uint32(0)
-		if f, ok := item.(int); ok {
-			freq = uint32(f)
-		}
-		if err := binary.Write(writer, binary.LittleEndian, freq); err != nil {
-			log.Errorf("Writing frequency for word %s: %v", word, err)
-		}
-		return nil
-	})
-	return err
 }
 
 // Stats returns statistics about the loaded dictionary
 // TODO: move to interface.go so it can collect all stats from diff instances
 func (c *Completer) Stats() map[string]int {
-	return map[string]int{
+	stats := map[string]int{
 		"totalWords":   c.totalWords,
 		"maxFrequency": c.maxFrequency,
 	}
+
+	// Add chunk loader stats if available
+	if c.chunkLoader != nil {
+		loaderStats := c.chunkLoader.GetStats()
+		stats["loadedChunks"] = loaderStats.LoadedChunks
+		stats["availableChunks"] = loaderStats.AvailableChunks
+		stats["chunkLoader"] = 1
+	} else {
+		stats["chunkLoader"] = 0
+	}
+
+	return stats
 }
