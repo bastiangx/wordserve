@@ -1,3 +1,4 @@
+// Package server implements an IPC server for word completion using stdin/stdout (std for fasest possible IPC).
 package server
 
 import (
@@ -9,7 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/bastiangx/typr-lib/pkg/completion"
+	"github.com/bastiangx/typr-lib/internal/utils"
+	completion "github.com/bastiangx/typr-lib/pkg/suggest"
 	"github.com/charmbracelet/log"
 )
 
@@ -166,7 +168,15 @@ func (s *Server) handleComplete(request Request) {
 	}
 	elapsed := time.Since(start)
 
-	normalizedSuggestions := normalizeRankings(suggestions)
+	ranks := utils.GeneratePositionalRanks(len(suggestions))
+	normalizedSuggestions := make([]ResponseSuggestion, len(suggestions))
+	for i, s := range suggestions {
+		normalizedSuggestions[i] = ResponseSuggestion{
+			Word: s.Word,
+			Rank: ranks[i],
+			Freq: s.Frequency,
+		}
+	}
 
 	wasCorrected := false
 	correctedPrefix := ""
@@ -185,49 +195,4 @@ func (s *Server) handleComplete(request Request) {
 	}
 
 	s.sendResponse(response)
-}
-
-// TODO: ranking hit max 10, which is not what we want. users can have up to 64 or more suggestions.
-// normalizeRankings converts raw frequency values to a 1-10 scale
-// where 1 is the highest rank (highest frequency) and 10 is the lowest
-func normalizeRankings(suggestions []completion.Suggestion) []ResponseSuggestion {
-	result := make([]ResponseSuggestion, len(suggestions))
-
-	// If no suggestions, return empty array
-	if len(suggestions) == 0 {
-		return result
-	}
-
-	// Find highest frequency for normalization
-	highestFreq := suggestions[0].Frequency
-
-	// Avoid div_by_zero
-	if highestFreq == 0 {
-		for i, s := range suggestions {
-			result[i] = ResponseSuggestion{
-				Word: s.Word,
-				Rank: 10.0,
-				Freq: s.Frequency,
-			}
-		}
-		return result
-	}
-
-	for i, s := range suggestions {
-		// Normalize linearly based on position in results
-		normalizedRank := 1.0 + 9.0*float64(i)/float64(len(suggestions)-1)
-
-		// For single result, assign rank 1
-		if len(suggestions) == 1 {
-			normalizedRank = 1.0
-		}
-
-		result[i] = ResponseSuggestion{
-			Word: s.Word,
-			Rank: normalizedRank,
-			Freq: s.Frequency,
-		}
-	}
-
-	return result
 }
