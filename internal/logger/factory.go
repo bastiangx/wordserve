@@ -1,3 +1,4 @@
+// Package logger provides modifications to charmbracelet/log's default logger to be used in various files/packages.
 package logger
 
 import (
