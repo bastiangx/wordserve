@@ -117,11 +117,11 @@ function Save_trie_chunk(trie, filename, word_data)
     local nodes_processed = 0
     local function serialize_node(node, prefix)
         if node.is_word then
-            -- Write this word and its frequency
+            -- Write this word and its rank (2 bytes instead of 4 bytes for frequency)
             local word_len = #prefix
             file:write(ffi.string(ffi.new("uint16_t[1]", word_len), 2))
             file:write(prefix)
-            file:write(ffi.string(ffi.new("uint32_t[1]", node.frequency), 4))
+            file:write(ffi.string(ffi.new("uint16_t[1]", node.frequency), 2))
 
             nodes_processed = nodes_processed + 1
             if verbose and nodes_processed % 5000 == 0 then
@@ -180,6 +180,17 @@ end
 local total_words = #word_list
 dbg_print(string.format("Loaded %d words total", total_words))
 
+-- Convert frequencies to ranks for memory optimization
+-- Since words.txt is already sorted by frequency, rank = position in list
+dbg_print("Converting frequencies to ranks for memory optimization...")
+for i, word_entry in ipairs(word_list) do
+    -- Rank starts at 1 (most frequent word), uint16 supports up to 65K words
+    local rank = math.min(i, 65535)
+    word_entry.rank = rank
+    words_with_frequencies[word_entry.word] = rank
+end
+dbg_print("Frequency to rank conversion complete")
+
 -- Calculate number of chunks needed
 local total_chunks = math.ceil(total_words / chunk_size)
 if max_chunks > 0 and total_chunks > max_chunks then
@@ -209,8 +220,9 @@ for chunk_idx = 1, total_chunks do
     for i = start_idx, end_idx do
         local word_entry = word_list[i]
         if word_entry then
-            chunk_trie:insert(word_entry.word, word_entry.freq)
-            chunk_words[word_entry.word] = word_entry.freq
+            -- Use rank instead of frequency for memory optimization
+            chunk_trie:insert(word_entry.word, word_entry.rank)
+            chunk_words[word_entry.word] = word_entry.rank
         end
     end
 

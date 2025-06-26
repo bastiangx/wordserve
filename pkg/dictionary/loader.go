@@ -63,7 +63,7 @@ func NewChunkLoader(dirPath string, chunkSize, maxWords int) *ChunkLoader {
 		wordFreqs:    make(map[string]int),
 		totalWords:   0,
 		maxFrequency: 0,
-		loadingCh:    make(chan int, 10), // Buffer for chunk loading queue
+		loadingCh:    make(chan int, 10),
 		done:         make(chan struct{}),
 		errorCount:   make(map[int]int),
 		maxRetries:   3,
@@ -253,18 +253,22 @@ func (cl *ChunkLoader) loadChunk(chunkID int) error {
 		}
 		word := string(wordBytes)
 
-		// Read frequency
-		var freq uint32
-		if err := binary.Read(reader, binary.LittleEndian, &freq); err != nil {
-			return fmt.Errorf("failed to read frequency: %w", err)
+		// Read rank (2 bytes instead of 4 bytes for frequency)
+		var rank uint16
+		if err := binary.Read(reader, binary.LittleEndian, &rank); err != nil {
+			return fmt.Errorf("failed to read rank: %w", err)
 		}
 
+		// Convert rank to inverse score for sorting (rank 1 = highest score)
+		// Use (max_uint16 + 1) - rank so rank 1 becomes 65535, rank 2 becomes 65534, etc.
+		score := int(65535 - rank + 1)
+
 		// Add to trie and frequency map
-		cl.trie.Insert(patricia.Prefix(word), int(freq))
-		cl.wordFreqs[word] = int(freq)
+		cl.trie.Insert(patricia.Prefix(word), score)
+		cl.wordFreqs[word] = score
 		cl.totalWords++
-		if int(freq) > cl.maxFrequency {
-			cl.maxFrequency = int(freq)
+		if score > cl.maxFrequency {
+			cl.maxFrequency = score
 		}
 
 		count++
