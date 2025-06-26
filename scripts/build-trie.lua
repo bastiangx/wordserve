@@ -1,10 +1,27 @@
 -- Builds chunked trie binaries from a word frequency file for lazy loading
--- Input: ../data/words.txt (format: "word <tab> frequency")
--- Output: Multiple binary files: ../data/dict_0001.bin, ../data/dict_0002.bin, etc.
+-- Input: data/words.txt (format: "word <tab> frequency") - relative to script location
+-- Output: Multiple binary files: data/dict_0001.bin, data/dict_0002.bin, etc.
 -- Each chunk contains a specified number of words (default: 10,000)
 -- Requires LuaJIT with FFI support
 
 local ffi = require("ffi")
+
+-- Get the directory where this script is located
+local function get_script_dir()
+    local info = debug.getinfo(1, "S")
+    local script_path = info.source:match("@(.*)")
+    if script_path then
+        -- Extract directory from full path
+        local dir = script_path:match("(.*/)") or "./"
+        return dir
+    end
+    return "./"
+end
+
+-- Get paths relative to script location
+local script_dir = get_script_dir()
+local data_dir = script_dir .. "../data/"
+local words_file = data_dir .. "words.txt"
 
 local verbose = false
 local show_help = false
@@ -45,8 +62,8 @@ if show_help then
     print("Usage: luajit build-chunked-trie.lua [ OPTIONS ]")
     print("")
     print("Builds chunked trie binaries from a word frequency file for lazy loading.")
-    print("Input: ../data/words.txt (format: 'word <tab> frequency')")
-    print("Output: Multiple binary files: ../data/dict_XXXX.bin")
+    print("Input: data/words.txt (format: 'word <tab> frequency') - relative to script location")
+    print("Output: Multiple binary files: data/dict_XXXX.bin - relative to script location")
     print("")
     print("Options:")
     print("  -h, --help         Show this help message")
@@ -170,10 +187,10 @@ end
 
 -- Main processing
 dbg_print("Building chunked tries from frequencies file...")
-local words_with_frequencies, word_list = Load_frequencies("../data/words.txt")
+local words_with_frequencies, word_list = Load_frequencies(words_file)
 
 if not words_with_frequencies or Count_table_entries(words_with_frequencies) == 0 then
-    err_print("Error: Failed to load frequencies from ../data/words.txt")
+    err_print("Error: Failed to load frequencies from " .. words_file)
     os.exit(1)
 end
 
@@ -227,7 +244,7 @@ for chunk_idx = 1, total_chunks do
     end
 
     -- Save this chunk
-    local chunk_filename = string.format("../data/dict_%04d.bin", chunk_idx)
+    local chunk_filename = string.format("%sdict_%04d.bin", data_dir, chunk_idx)
     if not Save_trie_chunk(chunk_trie, chunk_filename, chunk_words) then
         err_print("Failed to save chunk " .. chunk_idx)
         os.exit(1)
