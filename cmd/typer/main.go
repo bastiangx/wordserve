@@ -48,8 +48,8 @@ func main() {
 		log.SetLevel(log.ErrorLevel)
 	}
 
-	// Create lazy completer with the specified limits
-	log.Debugf("Initializing lazy completer: maxWords=%d, chunkSize=%d", *wordLimit, *chunkSize)
+	// Create completer with CompactTrie optimization
+	log.Debugf("Initializing completer: maxWords=%d, chunkSize=%d", *wordLimit, *chunkSize)
 	completer := completion.NewLazyCompleter(*binaryDir, *chunkSize, *wordLimit)
 
 	if *binaryDir != "" {

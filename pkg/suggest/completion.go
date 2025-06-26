@@ -4,6 +4,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/bastiangx/typr-lib/internal/utils"
 	"github.com/bastiangx/typr-lib/pkg/dictionary"
@@ -12,18 +13,16 @@ import (
 	"github.com/tchap/go-patricia/v2/patricia"
 )
 
-// String interning for memory optimization
 var (
-	stringPool = sync.Map{} // intern strings to reduce memory
+	stringPool     = sync.Map{}
 	wordBufferPool = sync.Pool{
-		New: func() interface{} {
-			buf := make([]byte, 64) // Pre-allocate 64 bytes
+		New: func() any {
+			buf := make([]byte, 64)
 			return &buf
 		},
 	}
 )
 
-// internString reduces memory usage by reusing identical strings
 func internString(s string) string {
 	if cached, exists := stringPool.Load(s); exists {
 		return cached.(string)
@@ -32,7 +31,6 @@ func internString(s string) string {
 	return s
 }
 
-// Suggestion represents a word completion suggestion with its frequency
 type Suggestion struct {
 	Word            string
 	Frequency       int
@@ -41,16 +39,15 @@ type Suggestion struct {
 	CorrectedPrefix string `json:",omitempty"`
 }
 
-// Completer provides word completion functionality
 type Completer struct {
 	trie         *patricia.Trie
+	hotCache     *HotCache
 	totalWords   int
 	maxFrequency int
 	wordFreqs    map[string]int
 	chunkLoader  *dictionary.ChunkLoader
 }
 
-// NewCompleter creates a completer (legacy - use NewLazyCompleter instead)
 func NewCompleter() *Completer {
 	return &Completer{
 		trie:         patricia.NewTrie(),
@@ -60,12 +57,13 @@ func NewCompleter() *Completer {
 	}
 }
 
-// NewLazyCompleter creates a new completer with dictionary loading
 func NewLazyCompleter(dirPath string, chunkSize, maxWords int) *Completer {
 	loader := dictionary.NewChunkLoader(dirPath, chunkSize, maxWords)
+	maxHotWords := 20000
 
 	return &Completer{
 		trie:         patricia.NewTrie(),
+		hotCache:     NewHotCache(maxHotWords),
 		totalWords:   0,
 		maxFrequency: 0,
 		wordFreqs:    make(map[string]int),
@@ -73,7 +71,6 @@ func NewLazyCompleter(dirPath string, chunkSize, maxWords int) *Completer {
 	}
 }
 
-// AddWord adds a word with its frequency to the trie
 func (c *Completer) AddWord(word string, frequency int) {
 	c.trie.Insert(patricia.Prefix(word), frequency)
 	c.wordFreqs[word] = frequency
@@ -83,14 +80,21 @@ func (c *Completer) AddWord(word string, frequency int) {
 	}
 }
 
-// Complete returns suggestions for a given prefix with optional frequency threshold
 func (c *Completer) Complete(prefix string, limit int) []Suggestion {
 	// Get the active trie (either our own or from chunk loader)
 	activeTrie := c.trie
 	if c.chunkLoader != nil {
 		activeTrie = c.chunkLoader.GetTrie()
+		if activeTrie == nil {
+			// Fall back to building trie from word frequencies
+			activeTrie = patricia.NewTrie()
+			wordFreqs := c.chunkLoader.GetWordFreqs()
+			for word, freq := range wordFreqs {
+				activeTrie.Insert(patricia.Prefix(word), freq)
+			}
+		}
 	}
-	
+
 	// Extract lowercase prefix for trie lookup
 	lowerPrefix := strings.ToLower(prefix)
 
@@ -100,9 +104,7 @@ func (c *Completer) Complete(prefix string, limit int) []Suggestion {
 		capitalPositions[i] = r >= 'A' && r <= 'Z'
 	}
 
-	// TODO: should be config default const
 	minFrequencyThreshold := 20
-
 	if len(lowerPrefix) <= 2 || utils.IsRepetitive(lowerPrefix) {
 		minFrequencyThreshold = 24
 	}
@@ -111,14 +113,14 @@ func (c *Completer) Complete(prefix string, limit int) []Suggestion {
 
 	// Visit subtree and collect
 	err := activeTrie.VisitSubtree(patricia.Prefix(lowerPrefix), func(p patricia.Prefix, item patricia.Item) error {
-		word := string(p)
-		
+		word := internString(string(p))
+
 		// Skip exact matches (both lowercase) to avoid duplicating the input
 		if word == lowerPrefix {
 			return nil
 		}
-		
-		var freq int = 1
+
+		freq := 1
 
 		switch v := item.(type) {
 		case int:
@@ -154,22 +156,19 @@ func (c *Completer) Complete(prefix string, limit int) []Suggestion {
 		})
 		return nil
 	})
-
 	if err != nil {
 		log.Errorf("Error visiting trie subtree: %v", err)
 		return nil
 	}
 
-	// Remove duplicates (case-insensitive)
-	seen := make(map[string]bool)
-	var uniqueSuggestions []Suggestion
-	for _, s := range suggestions {
-		key := strings.ToLower(s.Word)
-		if !seen[key] {
-			seen[key] = true
-			uniqueSuggestions = append(uniqueSuggestions, s)
-		}
+	// Add hot cache results if needed
+	if len(suggestions) < limit-1 {
+		hotSuggestions := SearchHotCache(c.hotCache, lowerPrefix, capitalPositions, minFrequencyThreshold)
+		suggestions = append(suggestions, hotSuggestions...)
 	}
+
+	// Remove duplicates and sort
+	uniqueSuggestions := DeduplicateAndSort(suggestions)
 
 	// Sort suggestions by frequency (highest first)
 	sort.Slice(uniqueSuggestions, func(i, j int) bool {
@@ -184,29 +183,32 @@ func (c *Completer) Complete(prefix string, limit int) []Suggestion {
 	return uniqueSuggestions
 }
 
-// LoadBinaryDictionary - interface compatibility (no-op, use Initialize instead)
+
 func (c *Completer) LoadBinaryDictionary(filename string) error {
 	return c.Initialize()
 }
 
-// Initialize initializes the completer
 func (c *Completer) Initialize() error {
 	if c.chunkLoader != nil {
-		// Start chunk loading
 		if err := c.chunkLoader.StartLazyLoading(); err != nil {
 			return err
 		}
-		// Update trie and word frequencies from the loader as chunks load
 		c.syncFromLoader()
+
+		// Populate hot cache after some initial loading
+		time.Sleep(100 * time.Millisecond)
+		if c.hotCache != nil {
+			// For now, skip hot cache to avoid complexity
+			// TODO: Re-implement hot cache with patricia.Trie
+		}
+
 		return nil
 	}
 	return nil
 }
 
-// syncFromLoader synchronizes data from the chunk loader
 func (c *Completer) syncFromLoader() {
 	if c.chunkLoader != nil {
-		c.trie = c.chunkLoader.GetTrie()
 		c.wordFreqs = c.chunkLoader.GetWordFreqs()
 		stats := c.chunkLoader.GetStats()
 		c.totalWords = stats.TotalWords
@@ -214,12 +216,10 @@ func (c *Completer) syncFromLoader() {
 	}
 }
 
-// LoadAllBinaries - interface compatibility (no-op, use Initialize instead)
 func (c *Completer) LoadAllBinaries(dirPath string) error {
 	return c.Initialize()
 }
 
-// RequestMoreWords requests loading of additional words
 func (c *Completer) RequestMoreWords(additionalWords int) error {
 	if c.chunkLoader != nil {
 		return c.chunkLoader.RequestMoreChunks(additionalWords)
@@ -227,22 +227,27 @@ func (c *Completer) RequestMoreWords(additionalWords int) error {
 	return nil // No-op if no chunk loader
 }
 
-// Stop stops the lazy loading process
 func (c *Completer) Stop() {
 	if c.chunkLoader != nil {
 		c.chunkLoader.Stop()
 	}
 }
 
-// Stats returns statistics about the loaded dictionary
-// TODO: move to interface.go so it can collect all stats from diff instances
+
+
 func (c *Completer) Stats() map[string]int {
 	stats := map[string]int{
 		"totalWords":   c.totalWords,
 		"maxFrequency": c.maxFrequency,
 	}
 
-	// Add chunk loader stats if available
+	if c.hotCache != nil {
+		cacheStats := c.hotCache.Stats()
+		for k, v := range cacheStats {
+			stats[k] = v
+		}
+	}
+
 	if c.chunkLoader != nil {
 		loaderStats := c.chunkLoader.GetStats()
 		stats["loadedChunks"] = loaderStats.LoadedChunks
@@ -251,6 +256,7 @@ func (c *Completer) Stats() map[string]int {
 	} else {
 		stats["chunkLoader"] = 0
 	}
+
 
 	return stats
 }
