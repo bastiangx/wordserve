@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/bastiangx/typr-lib/pkg/config"
 	"github.com/charmbracelet/log"
 )
 
@@ -111,8 +112,9 @@ func validateBinaryFormat(filename string) error {
 		return fmt.Errorf("invalid word count in %s: %d (negative)", filename, wordCount)
 	}
 
-	if wordCount > 1000000 { // Sanity check: more than 1M words seems suspicious
-		return fmt.Errorf("suspicious word count in %s: %d (too large)", filename, wordCount)
+	cfg := config.DefaultConfig()
+	if wordCount > int32(cfg.Dict.MaxWordCountValidation) {
+		return fmt.Errorf("suspicious word count in %s: %d (too large, max: %d)", filename, wordCount, cfg.Dict.MaxWordCountValidation)
 	}
 
 	log.Debugf("Binary file %s validated: %d words", filename, wordCount)

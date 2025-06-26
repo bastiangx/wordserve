@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/bastiangx/typr-lib/internal/utils"
+	"github.com/bastiangx/typr-lib/pkg/config"
 	"github.com/bastiangx/typr-lib/pkg/dictionary"
 	"github.com/charmbracelet/log"
 
@@ -32,11 +33,11 @@ func internString(s string) string {
 }
 
 type Suggestion struct {
-	Word            string
-	Frequency       int
-	WasCorrected    bool   `json:",omitempty"`
-	OriginalPrefix  string `json:",omitempty"`
-	CorrectedPrefix string `json:",omitempty"`
+	Word            string `msgpack:"w"`
+	Frequency       int    `msgpack:"f"`
+	WasCorrected    bool   `msgpack:"wc,omitempty"`
+	OriginalPrefix  string `msgpack:"op,omitempty"`
+	CorrectedPrefix string `msgpack:"cp,omitempty"`
 }
 
 type Completer struct {
@@ -59,7 +60,8 @@ func NewCompleter() *Completer {
 
 func NewLazyCompleter(dirPath string, chunkSize, maxWords int) *Completer {
 	loader := dictionary.NewChunkLoader(dirPath, chunkSize, maxWords)
-	maxHotWords := 20000
+	cfg := config.DefaultConfig() // Get config for constants
+	maxHotWords := cfg.Dict.MaxHotWords
 
 	return &Completer{
 		trie:         patricia.NewTrie(),
@@ -104,9 +106,10 @@ func (c *Completer) Complete(prefix string, limit int) []Suggestion {
 		capitalPositions[i] = r >= 'A' && r <= 'Z'
 	}
 
-	minFrequencyThreshold := 20
+	cfg := config.DefaultConfig() // Get config for frequency thresholds
+	minFrequencyThreshold := cfg.Dict.MinFreqThreshold
 	if len(lowerPrefix) <= 2 || utils.IsRepetitive(lowerPrefix) {
-		minFrequencyThreshold = 24
+		minFrequencyThreshold = cfg.Dict.MinFreqShortPrefix
 	}
 
 	var suggestions []Suggestion
