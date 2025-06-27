@@ -8,6 +8,7 @@ import (
 	"syscall"
 
 	"github.com/bastiangx/typr-lib/internal/cli"
+	"github.com/bastiangx/typr-lib/internal/utils"
 	"github.com/bastiangx/typr-lib/pkg/config"
 	"github.com/bastiangx/typr-lib/pkg/server"
 	completion "github.com/bastiangx/typr-lib/pkg/suggest"
@@ -32,7 +33,7 @@ func main() {
 	cliMode := flag.Bool("c", false, "Run in CLI input handler mode")
 	// Load config to get defaults
 	defaultConfig := config.DefaultConfig()
-	
+
 	limit := flag.Int("limit", defaultConfig.CLI.DefaultLimit, "Number of suggestions to return")
 	minPrefix := flag.Int("prmin", defaultConfig.CLI.DefaultMinLen, "Minimum prefix length for suggestions")
 	maxPrefix := flag.Int("prmax", defaultConfig.CLI.DefaultMaxLen, "Maximum prefix length for suggestions")
@@ -43,18 +44,38 @@ func main() {
 
 	flag.Parse()
 
+	// Initialize path resolver for robust path handling
+	pathResolver, err := utils.NewPathResolver()
+	if err != nil {
+		log.Fatalf("Failed to initialize path resolver: %v", err)
+		os.Exit(1)
+	}
+
 	// debugmode wip -- neds logic checks in the other packages
 	// needs to be gloabl var for package. read TODO on how
 	if *debugMode {
 		log.SetLevel(log.DebugLevel)
 		log.SetReportTimestamp(false)
+		// Print runtime info for debugging
+		log.Debug("Runtime environment:")
+		for key, value := range pathResolver.GetRuntimeInfo() {
+			log.Debugf("  %s: %s", key, value)
+		}
 	} else {
 		log.SetLevel(log.ErrorLevel)
 	}
 
+	// Resolve data directory path
+	resolvedDataDir, err := pathResolver.GetDataDir(*binaryDir)
+	if err != nil {
+		log.Fatalf("Failed to resolve data directory: %v", err)
+		os.Exit(1)
+	}
+	log.Debugf("Using data directory: %s", resolvedDataDir)
+
 	// Create completer with CompactTrie optimization
 	log.Debugf("Initializing completer: maxWords=%d, chunkSize=%d", *wordLimit, *chunkSize)
-	completer := completion.NewLazyCompleter(*binaryDir, *chunkSize, *wordLimit)
+	completer := completion.NewLazyCompleter(resolvedDataDir, *chunkSize, *wordLimit)
 
 	if *binaryDir != "" {
 		log.Debug("Initializing lazy loading from", "dir", *binaryDir, "maxWords", *wordLimit)
@@ -84,15 +105,21 @@ func main() {
 	}
 
 	log.Debug("spawning IPC processor")
-	
-	// Load or create configuration file
-	configPath := "typer-config.toml" // In working directory
+
+	// Load or create configuration file using PathResolver
+	configPath, err := pathResolver.GetConfigPath("typer-config.toml")
+	if err != nil {
+		log.Fatalf("Failed to determine config path: %v", err)
+		os.Exit(1)
+	}
+	log.Debugf("Using config file: %s", configPath)
+
 	appConfig, err := config.LoadOrCreate(configPath)
 	if err != nil {
 		log.Fatalf("Failed to load config: %v", err)
 		os.Exit(1)
 	}
-	
+
 	srv := server.NewServer(completer, appConfig, configPath)
 	if err := srv.Start(); err != nil {
 		log.Fatalf("Failed to start server: %v", err)

@@ -5,8 +5,8 @@ go 1.24.1
 require github.com/tchap/go-patricia/v2 v2.3.2
 
 require (
-	github.com/BurntSushi/toml v1.5.0 // indirect
-	github.com/vmihailenco/msgpack/v5 v5.4.1 // indirect
+	github.com/BurntSushi/toml v1.5.0
+	github.com/vmihailenco/msgpack/v5 v5.4.1
 	github.com/vmihailenco/tagparser/v2 v2.0.0 // indirect
 )
 
