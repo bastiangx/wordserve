@@ -8,6 +8,7 @@ import (
 	"syscall"
 
 	"github.com/bastiangx/typr-lib/internal/cli"
+	"github.com/bastiangx/typr-lib/pkg/config"
 	"github.com/bastiangx/typr-lib/pkg/server"
 	completion "github.com/bastiangx/typr-lib/pkg/suggest"
 	"github.com/charmbracelet/log"
@@ -26,14 +27,19 @@ func sigHandler() {
 
 func main() {
 	sigHandler()
-	// exportBin := flag.String("export", "", "Export path for binary dictionary file")
 	binaryDir := flag.String("data", "data/", "Directory containing typer's resource binary files (default: data/)")
 	debugMode := flag.Bool("d", false, "Toggle debug mode")
 	cliMode := flag.Bool("c", false, "Run in CLI input handler mode")
-	limit := flag.Int("limit", 24, "Number of suggestions to return (default: 24)")
-	minPrefix := flag.Int("prmin", 1, "Minimum prefix length for suggestions (default: 1)")
-	maxPrefix := flag.Int("prmax", 24, "Maximum prefix length for suggestions (default: 24)")
-	noFilter := flag.Bool("no-filter", false, "Disable input filtering (for debugging - shows all dictionary entries)")
+	// Load config to get defaults
+	defaultConfig := config.DefaultConfig()
+	
+	limit := flag.Int("limit", defaultConfig.CLI.DefaultLimit, "Number of suggestions to return")
+	minPrefix := flag.Int("prmin", defaultConfig.CLI.DefaultMinLen, "Minimum prefix length for suggestions")
+	maxPrefix := flag.Int("prmax", defaultConfig.CLI.DefaultMaxLen, "Maximum prefix length for suggestions")
+	noFilter := flag.Bool("no-filter", defaultConfig.CLI.DefaultNoFilter, "Disable input filtering (for debugging - shows all dictionary entries)")
+	// Lazy loading options
+	wordLimit := flag.Int("words", defaultConfig.Dict.MaxWords, "Maximum number of words to load (use 0 for all words)")
+	chunkSize := flag.Int("chunk", defaultConfig.Dict.ChunkSize, "Number of words per chunk for lazy loading")
 
 	flag.Parse()
 
@@ -46,17 +52,18 @@ func main() {
 		log.SetLevel(log.ErrorLevel)
 	}
 
-	// TODO: newCompleter doesnt return any errors too and should be modified.
-	completer := completion.NewCompleter()
+	// Create completer with CompactTrie optimization
+	log.Debugf("Initializing completer: maxWords=%d, chunkSize=%d", *wordLimit, *chunkSize)
+	completer := completion.NewLazyCompleter(*binaryDir, *chunkSize, *wordLimit)
 
 	if *binaryDir != "" {
-		log.Debug("Loading tries | ngrams from", "dir", *binaryDir)
-		err := completer.LoadAllBinaries(*binaryDir)
+		log.Debug("Initializing lazy loading from", "dir", *binaryDir, "maxWords", *wordLimit)
+		err := completer.Initialize()
 		if err != nil {
-			log.Fatalf("Binaries not found: %v", err)
+			log.Fatalf("Failed to initialize lazy completer: %v", err)
 			os.Exit(1)
 		}
-		log.Debug("Binary dictionaries loaded successfully")
+		log.Debug("Lazy completer initialized successfully")
 	} else {
 		log.Warn("No binary directory specified, running with empty dict")
 	}
@@ -77,19 +84,18 @@ func main() {
 	}
 
 	log.Debug("spawning IPC processor")
-	srv := server.NewServer(completer)
+	
+	// Load or create configuration file
+	configPath := "typer-config.toml" // In working directory
+	appConfig, err := config.LoadOrCreate(configPath)
+	if err != nil {
+		log.Fatalf("Failed to load config: %v", err)
+		os.Exit(1)
+	}
+	
+	srv := server.NewServer(completer, appConfig, configPath)
 	if err := srv.Start(); err != nil {
 		log.Fatalf("Failed to start server: %v", err)
 		os.Exit(1)
 	}
-
-	// if *exportBin != "" {
-	// 	fmt.Fprintf(os.Stderr, "Exporting binary dictionary to %s...\n", *exportBin)
-	// 	if err := completer.SaveBinaryDictionary(*exportBin); err != nil {
-	// 		fmt.Fprintf(os.Stderr, "Error exporting binary dictionary: %v\n", err)
-	// 	} else {
-	// 		fmt.Fprintf(os.Stderr, "Binary dictionary exported successfully\n")
-	// 	}
-	// }
-
 }

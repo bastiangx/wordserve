@@ -1,209 +1,130 @@
-// Package server implements an IPC server for word completion using stdin/stdout (std for fasest possible IPC).
+// Package server implements MessagePack IPC for completion + config updates
 package server
 
 import (
-	"bufio"
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
-	"strings"
+	"sync"
 	"time"
 
+	"github.com/bastiangx/typr-lib/pkg/config"
 	"github.com/bastiangx/typr-lib/internal/utils"
 	completion "github.com/bastiangx/typr-lib/pkg/suggest"
 	"github.com/charmbracelet/log"
+	"github.com/vmihailenco/msgpack/v5"
 )
 
-// ResponseSuggestion is the format for each suggestion in the API response
-type ResponseSuggestion struct {
-	Word string  `json:"word"`
-	Rank float64 `json:"rank"`
-	Freq int     `json:"freq,omitempty"`
-}
-
-// CompletionResponse is the overall API response format
-type CompletionResponse struct {
-	Suggestions     []ResponseSuggestion `json:"suggestions"`
-	Count           int                  `json:"count"`
-	Prefix          string               `json:"prefix"`
-	TimeTaken       int64                `json:"time_ms"`
-	WasCorrected    bool                 `json:"was_corrected,omitempty"`
-	CorrectedPrefix string               `json:"corrected_prefix,omitempty"`
-}
-
-// ErrorResponse represents an API error
-type ErrorResponse struct {
-	Error  string `json:"error"`
-	Status int    `json:"status"`
-}
-
-// Request represents an incoming request from the client
-type Request struct {
-	Command string `json:"command"`
-	Prefix  string `json:"prefix"`
-	Limit   int    `json:"limit,omitempty"`
-}
-
-// Server handles the IPC for word completions
+// Server handles completion requests and config updates
 type Server struct {
-	completer *completion.Completer
-	reader    *bufio.Reader
-	writer    io.Writer
+	completer  completion.ICompleter
+	config     *config.Config
+	configPath string
+	mu         sync.RWMutex
 }
 
-// Creates a new completion server using stdin/stdout for IPC
-func NewServer(completer *completion.Completer) *Server {
+// NewServer creates server with configuration
+func NewServer(completer completion.ICompleter, cfg *config.Config, configPath string) *Server {
 	return &Server{
-		completer: completer,
-		reader:    bufio.NewReader(os.Stdin),
-		writer:    os.Stdout,
+		completer:  completer,
+		config:     cfg,
+		configPath: configPath,
 	}
 }
 
-// Start begins listening for IPC requests
+// Start begins listening for completion requests
 func (s *Server) Start() error {
-	log.Debug("Starting Server.")
+	log.Debug("Starting MessagePack completion server")
 
-	// Signal that the server is ready
-	s.sendResponse(map[string]string{"status": "ready"})
-
-	// incoming requests stdin
+	// Main completion loop - optimized for speed
 	for {
-		line, err := s.reader.ReadString('\n')
-		if err != nil {
+		if err := s.processCompletionRequest(); err != nil {
 			if err == io.EOF {
+				log.Debug("Client disconnected")
 				return nil
 			}
-			log.Errorf("Reading from stdin: %v", err)
+			log.Errorf("Processing completion request: %v", err)
 			return err
 		}
-
-		line = strings.TrimSpace(line)
-		s.handleRequest(line)
 	}
 }
 
-// handleRequest processes an incoming request string
-func (s *Server) handleRequest(requestStr string) {
-	var request Request
-	if err := json.Unmarshal([]byte(requestStr), &request); err != nil {
-		s.sendError("Invalid JSON request", 400)
-		log.Errorf("Unmarshaling request: %v", err)
-		return
+// processCompletionRequest handles a single completion request
+func (s *Server) processCompletionRequest() error {
+	// Read MessagePack data from stdin
+	var request CompletionRequest
+	decoder := msgpack.NewDecoder(os.Stdin)
+	log.Debug("Waiting for request...")
+	if err := decoder.Decode(&request); err != nil {
+		log.Debugf("Decode error: %v", err)
+		return err
+	}
+	log.Debugf("Received request: prefix='%s', limit=%d", request.Prefix, request.Limit)
+
+	// Validate prefix using config
+	if request.Prefix == "" {
+		return s.sendError("empty prefix", 400)
+	}
+	if len(request.Prefix) < s.config.Server.MinPrefix {
+		return s.sendError(fmt.Sprintf("prefix too short (min: %d)", s.config.Server.MinPrefix), 400)
+	}
+	if len(request.Prefix) > s.config.Server.MaxPrefix {
+		return s.sendError(fmt.Sprintf("prefix too long (max: %d)", s.config.Server.MaxPrefix), 400)
+	}
+	
+	// Apply input filtering if enabled
+	if s.config.Server.EnableFilter && !utils.IsValidInput(request.Prefix) {
+		// Return empty suggestions for invalid input
+		return s.sendResponse(&CompletionResponse{
+			Suggestions: []CompletionSuggestion{},
+			Count:       0,
+			TimeTaken:   0,
+		})
 	}
 
-	// based on command
-	switch request.Command {
-	case "complete":
-		s.handleComplete(request)
-	case "health":
-		s.sendResponse(map[string]string{"status": "ok"})
-	default:
-		s.sendError(fmt.Sprintf("Unknown command: %s", request.Command), 400)
+	// Apply limit using config
+	if request.Limit <= 0 {
+		request.Limit = s.config.Server.MaxLimit / 2 // reasonable default
 	}
-}
-
-//	sendResponse function marshals the given response interface into JSON format and sends it to the client.
-//
-// The response is written to the server's writer, followed by a newline character.
-func (s *Server) sendResponse(response interface{}) {
-	data, err := json.Marshal(response)
-	if err != nil {
-		log.Errorf("Marshaling response: %v", err)
-		s.sendError("Internal server error", 500)
-		return
-	}
-	fmt.Fprintln(s.writer, string(data))
-}
-
-// sendError sends an error response
-func (s *Server) sendError(message string, code int) {
-	errResponse := ErrorResponse{
-		Error:  message,
-		Status: code,
-	}
-	s.sendResponse(errResponse)
-}
-
-// TODO: replace magic numbers with config defaults.
-// handleComplete processes a completion request. It validates the request,
-// retrieves suggestions from the completer, normalizes the rankings, and sends
-// the response. It handles fuzzy matching, prefix validation, and sets a default
-// limit if not specified in the request. It also includes correction information
-// in the response if the prefix was corrected.
-func (s *Server) handleComplete(request Request) {
-	prefix := request.Prefix
-
-	if prefix == "" {
-		s.sendError("Missing 'prefix' parameter", 400)
-		log.Debug("Prefix is empty in request")
-		return
+	if request.Limit > s.config.Server.MaxLimit {
+		request.Limit = s.config.Server.MaxLimit
 	}
 
-	if len(prefix) < 1 {
-		s.sendError("Prefix must be at least 1 characters", 400)
-		log.Debug("Prefix is too short in request")
-		return
-	}
-
-	if len(prefix) > 60 {
-		s.sendError("Prefix exceeds maximum length of 60 characters", 400)
-		log.Debug("Prefix is too long in request")
-		return
-	}
-
-	// Validate input - reject numbers and special characters
-	if !utils.IsValidInput(prefix) {
-		log.Warnf("prefix %s is not a valid input", prefix)
-		response := CompletionResponse{
-			Suggestions:     []ResponseSuggestion{},
-			Count:           0,
-			Prefix:          prefix,
-			TimeTaken:       0,
-			WasCorrected:    false,
-			CorrectedPrefix: "",
-		}
-		s.sendResponse(response)
-		return
-	}
-
-	limit := request.Limit
-	if limit < 1 {
-		limit = 10
-	}
-
+	// Get completions with timing
 	start := time.Now()
-	var suggestions []completion.Suggestion
-	// Use normal fast radix trie completion
-	suggestions = s.completer.Complete(prefix, limit)
+	suggestions := s.completer.Complete(request.Prefix, request.Limit)
 	elapsed := time.Since(start)
 
+	// Convert to response format
 	ranks := utils.GeneratePositionalRanks(len(suggestions))
-	normalizedSuggestions := make([]ResponseSuggestion, len(suggestions))
+	responseSuggestions := make([]CompletionSuggestion, len(suggestions))
 	for i, s := range suggestions {
-		normalizedSuggestions[i] = ResponseSuggestion{
+		responseSuggestions[i] = CompletionSuggestion{
 			Word: s.Word,
 			Rank: ranks[i],
-			Freq: s.Frequency,
 		}
 	}
 
-	wasCorrected := false
-	correctedPrefix := ""
-	if len(suggestions) > 0 && suggestions[0].WasCorrected {
-		wasCorrected = true
-		correctedPrefix = suggestions[0].CorrectedPrefix
+	response := &CompletionResponse{
+		Suggestions: responseSuggestions,
+		Count:       len(responseSuggestions),
+		TimeTaken:   elapsed.Microseconds(),
 	}
 
-	response := CompletionResponse{
-		Suggestions:     normalizedSuggestions,
-		Count:           len(normalizedSuggestions),
-		Prefix:          prefix,
-		TimeTaken:       elapsed.Milliseconds(),
-		WasCorrected:    wasCorrected,
-		CorrectedPrefix: correctedPrefix,
-	}
+	return s.sendResponse(response)
+}
 
-	s.sendResponse(response)
+// sendResponse encodes and sends MessagePack response to stdout
+func (s *Server) sendResponse(response any) error {
+	encoder := msgpack.NewEncoder(os.Stdout)
+	return encoder.Encode(response)
+}
+
+// sendError sends MessagePack error response
+func (s *Server) sendError(message string, code int) error {
+	errorResponse := &CompletionError{
+		Error: message,
+		Code:  code,
+	}
+	return s.sendResponse(errorResponse)
 }

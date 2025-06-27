@@ -1,137 +1,136 @@
-// Package config provides configuration management for the application.
-// It is stilll wip, needs complete rewrite for new changes.
 package config
 
 import (
-	"encoding/json"
-	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/BurntSushi/toml"
+	"github.com/charmbracelet/log"
 )
 
-// Config holds all application configuration
+// Config holds all application configuration - central point for constants
 type Config struct {
-	App        AppConfig        `json:"app"`
-	Completion CompletionConfig `json:"completion"`
-	Server     ServerConfig     `json:"server"`
-	Dictionary DictionaryConfig `json:"dictionary"`
+	Server ServerConfig `toml:"server"`
+	Dict   DictConfig   `toml:"dict"`
+	CLI    CLIConfig    `toml:"cli"`
 }
-
-type AppConfig struct {
-	LogLevel    string `json:"log_level"`
-	Environment string `json:"environment"` // dev, prod, test
-	DataDir     string `json:"data_dir"`
-}
-
-type CompletionConfig struct {
-	MinFrequencyThreshold int  `json:"min_frequency_threshold"`
-	ShortWordThreshold    int  `json:"short_word_threshold"`
-	MaxPrefixLength       int  `json:"max_prefix_length"`
-	DefaultLimit          int  `json:"default_limit"`
-	EnableFrequencyBoost  bool `json:"enable_frequency_boost"`
-}
-
 
 type ServerConfig struct {
-	Mode           string `json:"mode"` // ipc, http, tcp
-	Port           int    `json:"port,omitempty"`
-	ReadTimeout    int    `json:"read_timeout"`
-	WriteTimeout   int    `json:"write_timeout"`
-	MaxRequestSize int    `json:"max_request_size"`
+	MaxLimit     int  `toml:"max_limit"`
+	MinPrefix    int  `toml:"min_prefix"`
+	MaxPrefix    int  `toml:"max_prefix"`
+	EnableFilter bool `toml:"enable_filter"`
 }
 
-type DictionaryConfig struct {
-	BinaryDir    string   `json:"binary_dir"`
-	TextFiles    []string `json:"text_files"`
-	AutoLoad     bool     `json:"auto_load"`
-	CacheEnabled bool     `json:"cache_enabled"`
-	Languages    []string `json:"languages"`
+type DictConfig struct {
+	MaxWords             int `toml:"max_words"`
+	ChunkSize            int `toml:"chunk_size"`
+	MaxHotWords          int `toml:"max_hot_words"`
+	MinFreqThreshold     int `toml:"min_frequency_threshold"`
+	MinFreqShortPrefix   int `toml:"min_frequency_short_prefix"`
+	MaxWordCountValidation int `toml:"max_word_count_validation"`
 }
 
-// DefaultConfig returns the default configuration
+type CLIConfig struct {
+	DefaultLimit    int `toml:"default_limit"`
+	DefaultMinLen   int `toml:"default_min_len"`
+	DefaultMaxLen   int `toml:"default_max_len"`
+	DefaultNoFilter bool `toml:"default_no_filter"`
+}
+
+// Default values - central place for all constants
 func DefaultConfig() *Config {
 	return &Config{
-		App: AppConfig{
-			LogLevel:    "info",
-			Environment: "prod",
-			DataDir:     "./data",
-		},
-		Completion: CompletionConfig{
-			MinFrequencyThreshold: 40,
-			ShortWordThreshold:    60,
-			MaxPrefixLength:       60,
-			DefaultLimit:          10,
-			EnableFrequencyBoost:  true,
-		},
 		Server: ServerConfig{
-			Mode:           "ipc",
-			ReadTimeout:    30,
-			WriteTimeout:   30,
-			MaxRequestSize: 1024,
+			MaxLimit:     50,
+			MinPrefix:    1,
+			MaxPrefix:    60,
+			EnableFilter: true,
 		},
-		Dictionary: DictionaryConfig{
-			BinaryDir:    "./data",
-			AutoLoad:     true,
-			CacheEnabled: true,
-			Languages:    []string{"en"},
+		Dict: DictConfig{
+			MaxWords:               50000,  // from main.go --words default
+			ChunkSize:              10000,  // from main.go --chunk default
+			MaxHotWords:            20000,  // from completion.go NewLazyCompleter
+			MinFreqThreshold:       20,     // from completion.go minFrequencyThreshold
+			MinFreqShortPrefix:     24,     // from completion.go short prefix threshold
+			MaxWordCountValidation: 1000000, // from formats.go binary validation
+		},
+		CLI: CLIConfig{
+			DefaultLimit:    24,
+			DefaultMinLen:   1,
+			DefaultMaxLen:   24,
+			DefaultNoFilter: false,
 		},
 	}
 }
 
-// LoadConfig loads configuration from file with environment overrides
-func LoadConfig(configPath string) (*Config, error) {
-	cfg := DefaultConfig()
+// LoadOrCreate loads config from file or creates default if missing
+func LoadOrCreate(configPath string) (*Config, error) {
+	// Create config directory if it doesn't exist
+	configDir := filepath.Dir(configPath)
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		return nil, err
+	}
 
-	// Load from file if it exists
-	if configPath != "" {
-		if err := cfg.loadFromFile(configPath); err != nil {
-			return nil, fmt.Errorf("failed to load config file: %w", err)
+	// Check if config file exists
+	if _, err := os.Stat(configPath); os.IsNotExist(err) {
+		// Create default config file
+		config := DefaultConfig()
+		if err := SaveConfig(config, configPath); err != nil {
+			return nil, err
 		}
+		log.Debugf("Created default config file: %s", configPath)
+		return config, nil
 	}
 
-	// Apply environment overrides
-	cfg.applyEnvOverrides()
+	// Load existing config
+	config, err := LoadConfig(configPath)
+	if err != nil {
+		log.Warnf("Failed to load config, using defaults: %v", err)
+		return DefaultConfig(), nil
+	}
 
-	return cfg, nil
+	log.Debugf("Loaded config from: %s", configPath)
+	return config, nil
 }
 
-func (c *Config) loadFromFile(path string) error {
-	file, err := os.Open(path)
+// LoadConfig loads configuration from TOML file
+func LoadConfig(configPath string) (*Config, error) {
+	var config Config
+	if _, err := toml.DecodeFile(configPath, &config); err != nil {
+		return nil, err
+	}
+	return &config, nil
+}
+
+// SaveConfig saves configuration to TOML file  
+func SaveConfig(config *Config, configPath string) error {
+	file, err := os.Create(configPath)
 	if err != nil {
 		return err
 	}
 	defer file.Close()
 
-	decoder := json.NewDecoder(file)
-	return decoder.Decode(c)
+	encoder := toml.NewEncoder(file)
+	return encoder.Encode(config)
 }
 
-func (c *Config) applyEnvOverrides() {
-	if env := os.Getenv("TYPR_LOG_LEVEL"); env != "" {
-		c.App.LogLevel = env
+// UpdateConfig updates config values and saves to file
+func (c *Config) Update(configPath string, maxLimit, minPrefix, maxPrefix *int, enableFilter *bool) error {
+	// Update values if provided
+	if maxLimit != nil {
+		c.Server.MaxLimit = *maxLimit
 	}
-	if env := os.Getenv("TYPR_ENVIRONMENT"); env != "" {
-		c.App.Environment = env
+	if minPrefix != nil {
+		c.Server.MinPrefix = *minPrefix
 	}
-	if env := os.Getenv("TYPR_BINARY_DIR"); env != "" {
-		c.Dictionary.BinaryDir = env
+	if maxPrefix != nil {
+		c.Server.MaxPrefix = *maxPrefix
 	}
-}
-
-// SaveConfig saves the current config to a file
-func (c *Config) SaveConfig(path string) error {
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return err
+	if enableFilter != nil {
+		c.Server.EnableFilter = *enableFilter
 	}
 
-	file, err := os.Create(path)
-	if err != nil {
-		return err
-	}
-	defer file.Close()
-
-	encoder := json.NewEncoder(file)
-	encoder.SetIndent("", "  ")
-	return encoder.Encode(c)
+	// Save to file
+	return SaveConfig(c, configPath)
 }
