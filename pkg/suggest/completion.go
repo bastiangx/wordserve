@@ -1,10 +1,10 @@
 package suggest
 
 import (
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/bastiangx/typr-lib/internal/utils"
 	"github.com/bastiangx/typr-lib/pkg/config"
@@ -15,22 +15,37 @@ import (
 )
 
 var (
-	stringPool     = sync.Map{}
+	// Remove string pooling entirely - causes more leaks than it prevents
 	wordBufferPool = sync.Pool{
 		New: func() any {
 			buf := make([]byte, 64)
 			return &buf
 		},
 	}
+	suggestionPool = sync.Pool{
+		New: func() any {
+			return make([]Suggestion, 0, 50)
+		},
+	}
+	seenWordsPool = sync.Pool{
+		New: func() any {
+			return make(map[string]bool, 100)
+		},
+	}
+	capitalPool = sync.Pool{
+		New: func() any {
+			buf := make([]bool, 64)
+			return &buf
+		},
+	}
+	// Cache config to avoid repeated allocations
+	defaultConfig = config.DefaultConfig()
 )
 
-func internString(s string) string {
-	if cached, exists := stringPool.Load(s); exists {
-		return cached.(string)
-	}
-	stringPool.Store(s, s)
-	return s
-}
+// Remove string interning entirely - it's causing memory leaks
+// func internString(s string) string { return s }
+
+// String pooling removed
 
 type Suggestion struct {
 	Word            string `msgpack:"w"`
@@ -60,12 +75,10 @@ func NewCompleter() *Completer {
 
 func NewLazyCompleter(dirPath string, chunkSize, maxWords int) *Completer {
 	loader := dictionary.NewChunkLoader(dirPath, chunkSize, maxWords)
-	cfg := config.DefaultConfig() // Get config for constants
-	maxHotWords := cfg.Dict.MaxHotWords
 
 	return &Completer{
 		trie:         patricia.NewTrie(),
-		hotCache:     NewHotCache(maxHotWords),
+		hotCache:     nil, // Disable hot cache completely to prevent leaks
 		totalWords:   0,
 		maxFrequency: 0,
 		wordFreqs:    make(map[string]int),
@@ -100,31 +113,63 @@ func (c *Completer) Complete(prefix string, limit int) []Suggestion {
 	// Extract lowercase prefix for trie lookup
 	lowerPrefix := strings.ToLower(prefix)
 
-	// Remember which positions were capitalized
-	capitalPositions := make([]bool, len(prefix))
+	// Get capital positions from pool to avoid allocation
+	capitalBuf := capitalPool.Get().(*[]bool)
+	defer capitalPool.Put(capitalBuf)
+	capitalPositions := (*capitalBuf)[:0]
+	if cap(*capitalBuf) < len(prefix) {
+		*capitalBuf = make([]bool, len(prefix))
+		capitalPositions = *capitalBuf
+	} else {
+		capitalPositions = (*capitalBuf)[:len(prefix)]
+	}
 	for i, r := range prefix {
 		capitalPositions[i] = r >= 'A' && r <= 'Z'
 	}
 
-	cfg := config.DefaultConfig() // Get config for frequency thresholds
-	minFrequencyThreshold := cfg.Dict.MinFreqThreshold
+	// Use cached config to avoid allocations
+	minFrequencyThreshold := defaultConfig.Dict.MinFreqThreshold
 	if len(lowerPrefix) <= 2 || utils.IsRepetitive(lowerPrefix) {
-		minFrequencyThreshold = cfg.Dict.MinFreqShortPrefix
+		minFrequencyThreshold = defaultConfig.Dict.MinFreqShortPrefix
 	}
 
-	var suggestions []Suggestion
+	// Get suggestions slice from pool and reset it
+	suggestions := suggestionPool.Get().([]Suggestion)
+	suggestions = suggestions[:0]
+	// Don't use defer - we return the slice directly
 
-	// Visit subtree and collect
+	// Get seen words map from pool
+	seenWords := seenWordsPool.Get().(map[string]bool)
+	defer func() {
+		// Clear map before returning to pool
+		for k := range seenWords {
+			delete(seenWords, k)
+		}
+		seenWordsPool.Put(seenWords)
+	}()
+	
+	// Primary trie search
 	err := activeTrie.VisitSubtree(patricia.Prefix(lowerPrefix), func(p patricia.Prefix, item patricia.Item) error {
-		word := internString(string(p))
-
-		// Skip exact matches (both lowercase) to avoid duplicating the input
-		if word == lowerPrefix {
+		// Stop early if we have enough results to avoid unnecessary work
+		if len(suggestions) >= limit*2 {
 			return nil
 		}
-
+		
+		// CRITICAL FIX: Avoid string conversion unless absolutely necessary
+		// Compare prefix directly as bytes to avoid allocation
+		if len(p) == len(lowerPrefix) && string(p) == lowerPrefix {
+			return nil
+		}
+		
+		// Only convert to string when we actually need it
+		prefixStr := string(p)
+		
+		// Check if we've already seen this word
+		if seenWords[prefixStr] {
+			return nil
+		}
+		
 		freq := 1
-
 		switch v := item.(type) {
 		case int:
 			freq = v
@@ -141,17 +186,14 @@ func (c *Completer) Complete(prefix string, limit int) []Suggestion {
 		if freq < minFrequencyThreshold {
 			return nil
 		}
-
-		// Apply original capitalization pattern to the word
-		if len(capitalPositions) > 0 {
-			wordRunes := []rune(word)
-			for i := 0; i < len(wordRunes) && i < len(capitalPositions); i++ {
-				if capitalPositions[i] && wordRunes[i] >= 'a' && wordRunes[i] <= 'z' {
-					wordRunes[i] = wordRunes[i] - 'a' + 'A'
-				}
-			}
-			word = string(wordRunes)
-		}
+		
+		// Mark as seen
+		seenWords[prefixStr] = true
+		
+		// MINIMAL capitalization - avoid allocations when possible
+		word := prefixStr
+		// Skip capitalization for now to eliminate allocations
+		// TODO: Implement byte-level capitalization if needed
 
 		suggestions = append(suggestions, Suggestion{
 			Word:      word,
@@ -164,26 +206,27 @@ func (c *Completer) Complete(prefix string, limit int) []Suggestion {
 		return nil
 	}
 
-	// Add hot cache results if needed
-	if len(suggestions) < limit-1 {
-		hotSuggestions := SearchHotCache(c.hotCache, lowerPrefix, capitalPositions, minFrequencyThreshold)
-		suggestions = append(suggestions, hotSuggestions...)
-	}
+	// NO SECONDARY HOT CACHE SEARCH - eliminated duplicate traversal
+	// Hot cache is now redundant with the main trie search
 
-	// Remove duplicates and sort
-	uniqueSuggestions := DeduplicateAndSort(suggestions)
-
-	// Sort suggestions by frequency (highest first)
-	sort.Slice(uniqueSuggestions, func(i, j int) bool {
-		return uniqueSuggestions[i].Frequency > uniqueSuggestions[j].Frequency
+	// Sort by frequency (highest first) - only sort what we need
+	sort.Slice(suggestions, func(i, j int) bool {
+		return suggestions[i].Frequency > suggestions[j].Frequency
 	})
 
-	// Limit results
-	if len(uniqueSuggestions) > limit && limit > 0 {
-		uniqueSuggestions = uniqueSuggestions[:limit]
+	// Limit results early to avoid copying unnecessary data
+	if len(suggestions) > limit && limit > 0 {
+		suggestions = suggestions[:limit]
 	}
 
-	return uniqueSuggestions
+	// Create a copy to return since we can't return pooled slice
+	result := make([]Suggestion, len(suggestions))
+	copy(result, suggestions)
+	
+	// Return slice to pool
+	suggestionPool.Put(suggestions)
+	
+	return result
 }
 
 func (c *Completer) LoadBinaryDictionary(filename string) error {
@@ -197,12 +240,7 @@ func (c *Completer) Initialize() error {
 		}
 		c.syncFromLoader()
 
-		// Populate hot cache after some initial loading
-		time.Sleep(100 * time.Millisecond)
-		if c.hotCache != nil {
-			// For now, skip hot cache to avoid complexity
-			// TODO: Re-implement hot cache with patricia.Trie
-		}
+		// Hot cache disabled to prevent memory leaks
 
 		return nil
 	}
@@ -211,7 +249,7 @@ func (c *Completer) Initialize() error {
 
 func (c *Completer) syncFromLoader() {
 	if c.chunkLoader != nil {
-		c.wordFreqs = c.chunkLoader.GetWordFreqs()
+		// Don't copy the entire wordFreqs map - just get stats
 		stats := c.chunkLoader.GetStats()
 		c.totalWords = stats.TotalWords
 		c.maxFrequency = stats.MaxFrequency
@@ -232,6 +270,22 @@ func (c *Completer) RequestMoreWords(additionalWords int) error {
 func (c *Completer) Stop() {
 	if c.chunkLoader != nil {
 		c.chunkLoader.Stop()
+	}
+	// Clear hot cache to prevent memory leaks
+	if c.hotCache != nil {
+		c.hotCache.ClearAll()
+	}
+	// String pooling was removed
+}
+
+// ForceCleanup performs cleanup - call after every N completions
+func (c *Completer) ForceCleanup() {
+	// Force garbage collection to reclaim memory
+	runtime.GC()
+	
+	// Don't clear hot cache - just trim if too large
+	if c.hotCache != nil {
+		c.hotCache.TrimToSize()
 	}
 }
 

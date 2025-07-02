@@ -327,6 +327,8 @@ func (cl *ChunkLoader) UnloadChunk(chunkID int) error {
 
 // rebuildTrie reconstructs the trie from currently loaded chunks
 func (cl *ChunkLoader) rebuildTrie() {
+	// Store reference to old trie for proper cleanup
+	oldTrie := cl.trie
 	// Create new trie
 	cl.trie = patricia.NewTrie()
 
@@ -352,6 +354,10 @@ func (cl *ChunkLoader) rebuildTrie() {
 			}
 		}
 	}
+
+	// Help GC clean up old trie by nulling the reference
+	_ = oldTrie
+	oldTrie = nil
 
 	log.Debugf("Trie rebuilt with %d loaded chunks", len(cl.loadedChunks))
 }

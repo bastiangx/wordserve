@@ -10,10 +10,11 @@ import (
 
 // RuntimeLoader manages dynamic loading/unloading of dictionary chunks during runtime
 type RuntimeLoader struct {
-	chunkLoader     *ChunkLoader
-	targetChunks    int
-	availableChunks []ChunkInfo
-	mu              sync.RWMutex
+	chunkLoader        *ChunkLoader
+	targetChunks       int
+	availableChunks    []ChunkInfo
+	chunksCached       bool
+	mu                 sync.RWMutex
 }
 
 // NewRuntimeLoader creates a new runtime loader
@@ -26,27 +27,38 @@ func NewRuntimeLoader(chunkLoader *ChunkLoader) *RuntimeLoader {
 
 // GetAvailableChunkCount returns the total number of available chunk files
 func (rl *RuntimeLoader) GetAvailableChunkCount() (int, error) {
-	chunks, err := rl.chunkLoader.GetAvailableChunks()
-	if err != nil {
-		return 0, err
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+	
+	if !rl.chunksCached {
+		chunks, err := rl.chunkLoader.GetAvailableChunks()
+		if err != nil {
+			return 0, err
+		}
+		rl.availableChunks = chunks
+		rl.chunksCached = true
 	}
 
-	rl.mu.Lock()
-	rl.availableChunks = chunks
-	rl.mu.Unlock()
-
-	return len(chunks), nil
+	return len(rl.availableChunks), nil
 }
 
 // GetMaxWordsAvailable returns the maximum number of words that can be loaded
 func (rl *RuntimeLoader) GetMaxWordsAvailable() (int, error) {
-	chunks, err := rl.chunkLoader.GetAvailableChunks()
-	if err != nil {
-		return 0, err
+	rl.mu.RLock()
+	defer rl.mu.RUnlock()
+	
+	if !rl.chunksCached {
+		// Need to load chunks first
+		rl.mu.RUnlock()
+		_, err := rl.GetAvailableChunkCount()
+		if err != nil {
+			return 0, err
+		}
+		rl.mu.RLock()
 	}
 
 	totalWords := 0
-	for _, chunk := range chunks {
+	for _, chunk := range rl.availableChunks {
 		totalWords += chunk.WordCount
 	}
 
@@ -63,13 +75,17 @@ func (rl *RuntimeLoader) SetDictionarySize(targetChunks int) error {
 		return fmt.Errorf("minimum dictionary size is 1 chunk (10K words)")
 	}
 
-	chunks, err := rl.chunkLoader.GetAvailableChunks()
-	if err != nil {
-		return fmt.Errorf("failed to get available chunks: %w", err)
+	if !rl.chunksCached {
+		chunks, err := rl.chunkLoader.GetAvailableChunks()
+		if err != nil {
+			return fmt.Errorf("failed to get available chunks: %w", err)
+		}
+		rl.availableChunks = chunks
+		rl.chunksCached = true
 	}
 
-	if targetChunks > len(chunks) {
-		return fmt.Errorf("requested %d chunks but only %d are available", targetChunks, len(chunks))
+	if targetChunks > len(rl.availableChunks) {
+		return fmt.Errorf("requested %d chunks but only %d are available", targetChunks, len(rl.availableChunks))
 	}
 
 	currentStats := rl.chunkLoader.GetStats()

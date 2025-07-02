@@ -2,10 +2,12 @@
 package server
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"os"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/bastiangx/typr-lib/internal/utils"
@@ -22,6 +24,10 @@ type Server struct {
 	config        *config.Config
 	configPath    string
 	runtimeLoader *dictionary.RuntimeLoader
+	// Reuse objects to prevent allocations
+	decoder      *msgpack.Decoder
+	writeMutex   sync.Mutex
+	requestCount int64
 }
 
 // NewServer creates server with configuration
@@ -33,6 +39,9 @@ func NewServer(completer completion.ICompleter, cfg *config.Config, configPath s
 	}
 
 	log.Debugf("Creating server with completer type: %T", completer)
+
+	// Initialize reusable MessagePack decoder
+	server.decoder = msgpack.NewDecoder(os.Stdin)
 
 	// Initialize runtime loader if completer supports it
 	if lazyCompleter, ok := completer.(*completion.Completer); ok {
@@ -89,14 +98,23 @@ func (s *Server) Start() error {
 
 // processCompletionRequest handles a single completion request
 func (s *Server) processCompletionRequest() error {
-	// Reload config from TOML file to get latest settings
-	s.reloadConfig() // Ignore errors to avoid blocking requests
+	// Only reload config every 100 requests to reduce filesystem load
+	s.requestCount++
+	if s.requestCount%100 == 0 {
+		s.reloadConfig() // Ignore errors to avoid blocking requests
+	}
 
-	// Read MessagePack data from stdin
+	// Force cleanup every 50 requests
+	if s.requestCount%50 == 0 {
+		if completer, ok := s.completer.(interface{ ForceCleanup() }); ok {
+			completer.ForceCleanup()
+		}
+	}
+
+	// Read MessagePack data from stdin using reusable decoder
 	var rawRequest map[string]interface{}
-	decoder := msgpack.NewDecoder(os.Stdin)
 	log.Debug("Waiting for request...")
-	if err := decoder.Decode(&rawRequest); err != nil {
+	if err := s.decoder.Decode(&rawRequest); err != nil {
 		log.Debugf("Decode error: %v", err)
 		return err
 	}
@@ -115,31 +133,38 @@ func (s *Server) processCompletionRequest() error {
 		return s.processDictionaryRequest(rawRequest, "get_chunk_count")
 	}
 
-	// Handle as completion request
+	// Handle as completion request - direct field access to avoid marshal/unmarshal
 	var request CompletionRequest
-	// Re-parse the raw data as completion request
-	encoded, _ := msgpack.Marshal(rawRequest)
-	if err := msgpack.Unmarshal(encoded, &request); err != nil {
-		return err
+	if id, ok := rawRequest["id"].(string); ok {
+		request.Id = id
+	}
+	if prefix, ok := rawRequest["p"].(string); ok {
+		request.Prefix = prefix
+	}
+	if limit, ok := rawRequest["l"].(int); ok {
+		request.Limit = limit
+	} else if limitFloat, ok := rawRequest["l"].(float64); ok {
+		request.Limit = int(limitFloat)
 	}
 
 	log.Debugf("Received completion request: prefix='%s', limit=%d", request.Prefix, request.Limit)
 
 	// Validate prefix using config
 	if request.Prefix == "" {
-		return s.sendError("empty prefix", 400)
+		return s.sendError(request.Id, "empty prefix", 400)
 	}
 	if len(request.Prefix) < s.config.Server.MinPrefix {
-		return s.sendError(fmt.Sprintf("prefix too short (min: %d)", s.config.Server.MinPrefix), 400)
+		return s.sendError(request.Id, fmt.Sprintf("prefix too short (min: %d)", s.config.Server.MinPrefix), 400)
 	}
 	if len(request.Prefix) > s.config.Server.MaxPrefix {
-		return s.sendError(fmt.Sprintf("prefix too long (max: %d)", s.config.Server.MaxPrefix), 400)
+		return s.sendError(request.Id, fmt.Sprintf("prefix too long (max: %d)", s.config.Server.MaxPrefix), 400)
 	}
 
 	// Apply input filtering if enabled
 	if s.config.Server.EnableFilter && !utils.IsValidInput(request.Prefix) {
 		// Return empty suggestions for invalid input
 		return s.sendResponse(&CompletionResponse{
+			Id:          request.Id,
 			Suggestions: []CompletionSuggestion{},
 			Count:       0,
 			TimeTaken:   0,
@@ -159,17 +184,17 @@ func (s *Server) processCompletionRequest() error {
 	suggestions := s.completer.Complete(request.Prefix, request.Limit)
 	elapsed := time.Since(start)
 
-	// Convert to response format
-	ranks := utils.GeneratePositionalRanks(len(suggestions))
+	// Convert to response format - eliminate rank generation if not needed
 	responseSuggestions := make([]CompletionSuggestion, len(suggestions))
 	for i, s := range suggestions {
 		responseSuggestions[i] = CompletionSuggestion{
 			Word: s.Word,
-			Rank: ranks[i],
+			Rank: uint16(i + 1), // Simple rank instead of utils.GeneratePositionalRanks
 		}
 	}
 
 	response := &CompletionResponse{
+		Id:          request.Id,
 		Suggestions: responseSuggestions,
 		Count:       len(responseSuggestions),
 		TimeTaken:   elapsed.Microseconds(),
@@ -178,15 +203,33 @@ func (s *Server) processCompletionRequest() error {
 	return s.sendResponse(response)
 }
 
-// sendResponse encodes and sends MessagePack response to stdout
+// sendResponse encodes and sends MessagePack response to stdout atomically
 func (s *Server) sendResponse(response any) error {
-	encoder := msgpack.NewEncoder(os.Stdout)
-	return encoder.Encode(response)
+	s.writeMutex.Lock()
+	defer s.writeMutex.Unlock()
+
+	// Encode to buffer first to ensure atomic write
+	var buf bytes.Buffer
+	encoder := msgpack.NewEncoder(&buf)
+	if err := encoder.Encode(response); err != nil {
+		return fmt.Errorf("failed to encode response: %w", err)
+	}
+
+	// Write the complete msgpack data atomically
+	if _, err := os.Stdout.Write(buf.Bytes()); err != nil {
+		return fmt.Errorf("failed to write response: %w", err)
+	}
+
+	// Ensure data is flushed immediately
+	os.Stdout.Sync()
+
+	return nil
 }
 
 // sendError sends MessagePack error response
-func (s *Server) sendError(message string, code int) error {
+func (s *Server) sendError(id string, message string, code int) error {
 	errorResponse := &CompletionError{
+		Id:    id,
 		Error: message,
 		Code:  code,
 	}
@@ -197,9 +240,15 @@ func (s *Server) sendError(message string, code int) error {
 func (s *Server) processDictionaryRequest(rawRequest map[string]interface{}, action string) error {
 	log.Debugf("Processing dictionary request: action=%s", action)
 
+	var id string
+	if rawId, ok := rawRequest["id"]; ok {
+		id = rawId.(string)
+	}
+
 	if s.runtimeLoader == nil {
 		log.Debug("Dictionary management not available - runtimeLoader is nil")
 		return s.sendResponse(&DictionaryResponse{
+			Id:     id,
 			Status: "error",
 			Error:  "Dictionary management not available",
 		})
@@ -212,11 +261,13 @@ func (s *Server) processDictionaryRequest(rawRequest map[string]interface{}, act
 		currentChunks, availableChunks, err := s.runtimeLoader.GetCurrentDictionaryInfo()
 		if err != nil {
 			return s.sendResponse(&DictionaryResponse{
+				Id:     id,
 				Status: "error",
 				Error:  err.Error(),
 			})
 		}
 		return s.sendResponse(&DictionaryResponse{
+			Id:              id,
 			Status:          "ok",
 			CurrentChunks:   currentChunks,
 			AvailableChunks: availableChunks,
@@ -226,6 +277,7 @@ func (s *Server) processDictionaryRequest(rawRequest map[string]interface{}, act
 		options, err := s.runtimeLoader.GetDictionarySizeOptions()
 		if err != nil {
 			return s.sendResponse(&DictionaryResponse{
+				Id:     id,
 				Status: "error",
 				Error:  err.Error(),
 			})
@@ -240,6 +292,7 @@ func (s *Server) processDictionaryRequest(rawRequest map[string]interface{}, act
 			}
 		}
 		return s.sendResponse(&DictionaryResponse{
+			Id:      id,
 			Status:  "ok",
 			Options: serverOptions,
 		})
@@ -248,6 +301,7 @@ func (s *Server) processDictionaryRequest(rawRequest map[string]interface{}, act
 		chunkCount, exists := rawRequest["chunk_count"]
 		if !exists {
 			return s.sendResponse(&DictionaryResponse{
+				Id:     id,
 				Status: "error",
 				Error:  "chunk_count required for set_size action",
 			})
@@ -266,12 +320,14 @@ func (s *Server) processDictionaryRequest(rawRequest map[string]interface{}, act
 				count = parsedCount
 			} else {
 				return s.sendResponse(&DictionaryResponse{
+					Id:     id,
 					Status: "error",
 					Error:  "invalid chunk_count format",
 				})
 			}
 		default:
 			return s.sendResponse(&DictionaryResponse{
+				Id:     id,
 				Status: "error",
 				Error:  fmt.Sprintf("invalid chunk_count type: %T", v),
 			})
@@ -279,12 +335,14 @@ func (s *Server) processDictionaryRequest(rawRequest map[string]interface{}, act
 
 		if err := s.runtimeLoader.SetDictionarySize(count); err != nil {
 			return s.sendResponse(&DictionaryResponse{
+				Id:     id,
 				Status: "error",
 				Error:  err.Error(),
 			})
 		}
 
 		return s.sendResponse(&DictionaryResponse{
+			Id:     id,
 			Status: "ok",
 		})
 
@@ -292,18 +350,21 @@ func (s *Server) processDictionaryRequest(rawRequest map[string]interface{}, act
 		_, availableChunks, err := s.runtimeLoader.GetCurrentDictionaryInfo()
 		if err != nil {
 			return s.sendResponse(&ConfigResponse{
+				Id:     id,
 				Status: "error",
 				Error:  err.Error(),
 			})
 		}
 
 		return s.sendResponse(&ConfigResponse{
+			Id:              id,
 			Status:          "ok",
 			AvailableChunks: availableChunks,
 		})
 
 	default:
 		return s.sendResponse(&DictionaryResponse{
+			Id:     id,
 			Status: "error",
 			Error:  fmt.Sprintf("unknown action: %s", action),
 		})

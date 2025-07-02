@@ -20,6 +20,7 @@ type InputHandler struct {
 	maxPrefixLength int
 	suggestLimit    int
 	noFilter        bool // If true, bypasses all input filtering for debugging
+	requestCount    int  // Track requests for periodic cleanup
 }
 
 // NewInputHandler creates a new CLI input handler
@@ -57,6 +58,15 @@ func (h *InputHandler) Start() error {
 
 // handleInput processes user input and displays completions
 func (h *InputHandler) handleInput(prefix string) {
+	// Increment request count and cleanup periodically
+	h.requestCount++
+	if h.requestCount%50 == 0 {
+		// Force cleanup every 50 requests to prevent memory growth
+		if completer, ok := h.completer.(interface{ ForceCleanup() }); ok {
+			completer.ForceCleanup()
+		}
+	}
+	
 	if len(prefix) < h.minPrefixLength {
 		log.Errorf("Prefix too short: %s", prefix)
 		return
