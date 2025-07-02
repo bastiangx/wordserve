@@ -10,7 +10,7 @@ type CompletionRequest struct {
 	Limit  int    `msgpack:"l,omitempty"`
 }
 
-// CompletionSuggestion - minimal suggestion response 
+// CompletionSuggestion - minimal suggestion response
 type CompletionSuggestion struct {
 	Word string `msgpack:"w"`
 	Rank uint16 `msgpack:"r"`
@@ -23,20 +23,35 @@ type CompletionResponse struct {
 	TimeTaken   int64                  `msgpack:"t"` // microseconds
 }
 
-// CONFIG MESSAGES - Settings updates
+// CONFIG MESSAGES - Settings updates (dictionary only, other configs via TOML)
 
-// ConfigUpdateRequest - update server configuration
-type ConfigUpdateRequest struct {
-	MaxLimit     *int  `msgpack:"max_limit,omitempty"`
-	MinPrefix    *int  `msgpack:"min_prefix,omitempty"`
-	MaxPrefix    *int  `msgpack:"max_prefix,omitempty"`
-	EnableFilter *bool `msgpack:"enable_filter,omitempty"`
+// DictionaryRequest - dictionary management request
+type DictionaryRequest struct {
+	Action     string `msgpack:"action"`                // "get_info", "set_size", "get_options", "get_chunk_count"
+	ChunkCount *int   `msgpack:"chunk_count,omitempty"` // for "set_size"
+}
+
+// DictionarySizeOption - dictionary size option
+type DictionarySizeOption struct {
+	ChunkCount int    `msgpack:"chunk_count"`
+	WordCount  int    `msgpack:"word_count"`
+	SizeLabel  string `msgpack:"size_label"`
+}
+
+// DictionaryResponse - dictionary operation response
+type DictionaryResponse struct {
+	Status          string                 `msgpack:"status"` // "ok" or "error"
+	Error           string                 `msgpack:"error,omitempty"`
+	CurrentChunks   int                    `msgpack:"current_chunks,omitempty"`
+	AvailableChunks int                    `msgpack:"available_chunks,omitempty"`
+	Options         []DictionarySizeOption `msgpack:"options,omitempty"`
 }
 
 // ConfigResponse - config operation response
 type ConfigResponse struct {
-	Status string `msgpack:"status"` // "ok" or "error"
-	Error  string `msgpack:"error,omitempty"`
+	Status          string `msgpack:"status"` // "ok" or "error"
+	Error           string `msgpack:"error,omitempty"`
+	AvailableChunks int    `msgpack:"available_chunks,omitempty"`
 }
 
 // ERROR RESPONSES - Generic errors

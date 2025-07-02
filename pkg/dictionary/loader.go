@@ -23,6 +23,7 @@ type ChunkLoader struct {
 	chunkSize    int
 	maxWords     int
 	loadedChunks map[int]bool
+	chunkWords   map[int]map[string]int // Track which words belong to which chunk
 	trie         *patricia.Trie
 	wordFreqs    map[string]int
 	totalWords   int
@@ -44,12 +45,12 @@ type ChunkInfo struct {
 
 // LoaderStats provides statistics about the loading process
 type LoaderStats struct {
-	TotalWords     int
-	LoadedWords    int
-	LoadedChunks   int
+	TotalWords      int
+	LoadedWords     int
+	LoadedChunks    int
 	AvailableChunks int
-	MaxFrequency   int
-	IsLoading      bool
+	MaxFrequency    int
+	IsLoading       bool
 }
 
 // NewChunkLoader creates a new lazy chunk loader
@@ -59,6 +60,7 @@ func NewChunkLoader(dirPath string, chunkSize, maxWords int) *ChunkLoader {
 		chunkSize:    chunkSize,
 		maxWords:     maxWords,
 		loadedChunks: make(map[int]bool),
+		chunkWords:   make(map[int]map[string]int),
 		trie:         patricia.NewTrie(),
 		wordFreqs:    make(map[string]int),
 		totalWords:   0,
@@ -158,14 +160,14 @@ func (cl *ChunkLoader) StartLazyLoading() error {
 		if loadedWords >= wordsToLoad {
 			break
 		}
-		
+
 		select {
 		case cl.loadingCh <- chunk.ChunkID:
 			log.Debugf("Queued chunk %d for loading", chunk.ChunkID)
 		case <-time.After(100 * time.Millisecond):
 			log.Warnf("Loading queue full, chunk %d will be loaded later", chunk.ChunkID)
 		}
-		
+
 		loadedWords += chunk.WordCount
 	}
 
@@ -179,13 +181,13 @@ func (cl *ChunkLoader) backgroundLoader() {
 		case chunkID := <-cl.loadingCh:
 			if err := cl.loadChunk(chunkID); err != nil {
 				log.Errorf("Failed to load chunk %d: %v", chunkID, err)
-				
+
 				// Retry logic
 				cl.mu.Lock()
 				cl.errorCount[chunkID]++
 				errorCount := cl.errorCount[chunkID]
 				cl.mu.Unlock()
-				
+
 				if errorCount < cl.maxRetries {
 					log.Debugf("Retrying chunk %d (attempt %d/%d)", chunkID, errorCount+1, cl.maxRetries)
 					// Retry after a short delay
@@ -266,6 +268,13 @@ func (cl *ChunkLoader) loadChunk(chunkID int) error {
 		// Add to trie and frequency map
 		cl.trie.Insert(patricia.Prefix(word), score)
 		cl.wordFreqs[word] = score
+
+		// Track which chunk this word belongs to
+		if cl.chunkWords[chunkID] == nil {
+			cl.chunkWords[chunkID] = make(map[string]int)
+		}
+		cl.chunkWords[chunkID][word] = score
+
 		cl.totalWords++
 		if score > cl.maxFrequency {
 			cl.maxFrequency = score
@@ -277,6 +286,74 @@ func (cl *ChunkLoader) loadChunk(chunkID int) error {
 	cl.loadedChunks[chunkID] = true
 	log.Debugf("Chunk %d loaded: %d words", chunkID, count)
 	return nil
+}
+
+// UnloadChunk removes a specific chunk from memory
+func (cl *ChunkLoader) UnloadChunk(chunkID int) error {
+	cl.mu.Lock()
+	defer cl.mu.Unlock()
+
+	// Check if chunk is loaded
+	if !cl.loadedChunks[chunkID] {
+		return fmt.Errorf("chunk %d is not loaded", chunkID)
+	}
+
+	log.Debugf("Unloading chunk %d", chunkID)
+
+	// Remove from loaded chunks
+	delete(cl.loadedChunks, chunkID)
+
+	// Remove words from trie and word frequencies
+	chunkWords, exists := cl.chunkWords[chunkID]
+	if !exists {
+		return fmt.Errorf("chunk %d word data not found", chunkID)
+	}
+
+	// Remove words from word frequencies map
+	for word := range chunkWords {
+		delete(cl.wordFreqs, word)
+		cl.totalWords--
+	}
+
+	// Remove chunk word tracking
+	delete(cl.chunkWords, chunkID)
+
+	// Rebuild the trie without the unloaded chunk
+	cl.rebuildTrie()
+
+	log.Debugf("Successfully unloaded chunk %d", chunkID)
+	return nil
+}
+
+// rebuildTrie reconstructs the trie from currently loaded chunks
+func (cl *ChunkLoader) rebuildTrie() {
+	// Create new trie
+	cl.trie = patricia.NewTrie()
+
+	// Recalculate max frequency
+	cl.maxFrequency = 0
+
+	// Add words from all loaded chunks
+	for chunkID, loaded := range cl.loadedChunks {
+		if !loaded {
+			continue
+		}
+
+		chunkWords, exists := cl.chunkWords[chunkID]
+		if !exists {
+			continue
+		}
+
+		// Add all words from this chunk to the trie
+		for word, freq := range chunkWords {
+			cl.trie.Insert(patricia.Prefix(word), freq)
+			if freq > cl.maxFrequency {
+				cl.maxFrequency = freq
+			}
+		}
+	}
+
+	log.Debugf("Trie rebuilt with %d loaded chunks", len(cl.loadedChunks))
 }
 
 // GetTrie returns the loaded trie (thread-safe)
@@ -350,4 +427,43 @@ func (cl *ChunkLoader) RequestMoreChunks(additionalWords int) error {
 	}
 
 	return nil
+}
+
+// LoadSpecificChunk loads a specific chunk by ID
+func (cl *ChunkLoader) LoadSpecificChunk(chunkID int) error {
+	cl.mu.RLock()
+	alreadyLoaded := cl.loadedChunks[chunkID]
+	cl.mu.RUnlock()
+
+	if alreadyLoaded {
+		return nil // Already loaded
+	}
+
+	return cl.loadChunk(chunkID)
+}
+
+// GetLoadedChunkIDs returns a slice of currently loaded chunk IDs
+func (cl *ChunkLoader) GetLoadedChunkIDs() []int {
+	cl.mu.RLock()
+	defer cl.mu.RUnlock()
+
+	var loadedIDs []int
+	for chunkID, loaded := range cl.loadedChunks {
+		if loaded {
+			loadedIDs = append(loadedIDs, chunkID)
+		}
+	}
+
+	// Sort for consistent ordering
+	sort.Ints(loadedIDs)
+	return loadedIDs
+}
+
+// GetAvailableChunkCount returns the total number of available chunk files
+func (cl *ChunkLoader) GetAvailableChunkCount() (int, error) {
+	chunks, err := cl.GetAvailableChunks()
+	if err != nil {
+		return 0, err
+	}
+	return len(chunks), nil
 }

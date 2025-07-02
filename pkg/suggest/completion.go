@@ -186,7 +186,6 @@ func (c *Completer) Complete(prefix string, limit int) []Suggestion {
 	return uniqueSuggestions
 }
 
-
 func (c *Completer) LoadBinaryDictionary(filename string) error {
 	return c.Initialize()
 }
@@ -236,8 +235,6 @@ func (c *Completer) Stop() {
 	}
 }
 
-
-
 func (c *Completer) Stats() map[string]int {
 	stats := map[string]int{
 		"totalWords":   c.totalWords,
@@ -260,6 +257,9 @@ func (c *Completer) Stats() map[string]int {
 		stats["chunkLoader"] = 0
 	}
 
-
 	return stats
+}
+
+func (c *Completer) GetChunkLoader() *dictionary.ChunkLoader {
+	return c.chunkLoader
 }

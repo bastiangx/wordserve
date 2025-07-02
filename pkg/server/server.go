@@ -5,11 +5,12 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"sync"
+	"strconv"
 	"time"
 
-	"github.com/bastiangx/typr-lib/pkg/config"
 	"github.com/bastiangx/typr-lib/internal/utils"
+	"github.com/bastiangx/typr-lib/pkg/config"
+	"github.com/bastiangx/typr-lib/pkg/dictionary"
 	completion "github.com/bastiangx/typr-lib/pkg/suggest"
 	"github.com/charmbracelet/log"
 	"github.com/vmihailenco/msgpack/v5"
@@ -17,19 +18,56 @@ import (
 
 // Server handles completion requests and config updates
 type Server struct {
-	completer  completion.ICompleter
-	config     *config.Config
-	configPath string
-	mu         sync.RWMutex
+	completer     completion.ICompleter
+	config        *config.Config
+	configPath    string
+	runtimeLoader *dictionary.RuntimeLoader
 }
 
 // NewServer creates server with configuration
 func NewServer(completer completion.ICompleter, cfg *config.Config, configPath string) *Server {
-	return &Server{
+	server := &Server{
 		completer:  completer,
 		config:     cfg,
 		configPath: configPath,
 	}
+
+	log.Debugf("Creating server with completer type: %T", completer)
+
+	// Initialize runtime loader if completer supports it
+	if lazyCompleter, ok := completer.(*completion.Completer); ok {
+		log.Debug("Successfully cast completer to *completion.Completer")
+		// Access the chunk loader if available
+		if chunkLoader := lazyCompleter.GetChunkLoader(); chunkLoader != nil {
+			log.Debug("ChunkLoader is available, creating RuntimeLoader")
+			server.runtimeLoader = dictionary.NewRuntimeLoader(chunkLoader)
+		} else {
+			log.Debug("ChunkLoader is nil")
+		}
+	} else {
+		log.Debug("Failed to cast completer to *completion.Completer")
+	}
+
+	if server.runtimeLoader != nil {
+		log.Debug("RuntimeLoader successfully initialized")
+	} else {
+		log.Debug("RuntimeLoader is nil after initialization")
+	}
+
+	return server
+}
+
+// reloadConfig reloads configuration from TOML file
+func (s *Server) reloadConfig() error {
+	newConfig, err := config.LoadConfig(s.configPath)
+	if err != nil {
+		log.Warnf("Failed to reload config, keeping current: %v", err)
+		return err
+	}
+
+	s.config = newConfig
+	log.Debugf("Config reloaded from: %s", s.configPath)
+	return nil
 }
 
 // Start begins listening for completion requests
@@ -51,15 +89,41 @@ func (s *Server) Start() error {
 
 // processCompletionRequest handles a single completion request
 func (s *Server) processCompletionRequest() error {
+	// Reload config from TOML file to get latest settings
+	s.reloadConfig() // Ignore errors to avoid blocking requests
+
 	// Read MessagePack data from stdin
-	var request CompletionRequest
+	var rawRequest map[string]interface{}
 	decoder := msgpack.NewDecoder(os.Stdin)
 	log.Debug("Waiting for request...")
-	if err := decoder.Decode(&request); err != nil {
+	if err := decoder.Decode(&rawRequest); err != nil {
 		log.Debugf("Decode error: %v", err)
 		return err
 	}
-	log.Debugf("Received request: prefix='%s', limit=%d", request.Prefix, request.Limit)
+
+	// Check if this is a dictionary request
+	if action, exists := rawRequest["action"]; exists {
+		return s.processDictionaryRequest(rawRequest, action.(string))
+	}
+
+	// Remove config update handling - now handled via TOML file
+	// Dictionary size updates still use msgpack for runtime changes
+	if _, hasDictSize := rawRequest["dictionary_size"]; hasDictSize {
+		return s.processDictionaryRequest(rawRequest, "set_size")
+	}
+	if _, hasGetChunkCount := rawRequest["get_chunk_count"]; hasGetChunkCount {
+		return s.processDictionaryRequest(rawRequest, "get_chunk_count")
+	}
+
+	// Handle as completion request
+	var request CompletionRequest
+	// Re-parse the raw data as completion request
+	encoded, _ := msgpack.Marshal(rawRequest)
+	if err := msgpack.Unmarshal(encoded, &request); err != nil {
+		return err
+	}
+
+	log.Debugf("Received completion request: prefix='%s', limit=%d", request.Prefix, request.Limit)
 
 	// Validate prefix using config
 	if request.Prefix == "" {
@@ -71,7 +135,7 @@ func (s *Server) processCompletionRequest() error {
 	if len(request.Prefix) > s.config.Server.MaxPrefix {
 		return s.sendError(fmt.Sprintf("prefix too long (max: %d)", s.config.Server.MaxPrefix), 400)
 	}
-	
+
 	// Apply input filtering if enabled
 	if s.config.Server.EnableFilter && !utils.IsValidInput(request.Prefix) {
 		// Return empty suggestions for invalid input
@@ -127,4 +191,121 @@ func (s *Server) sendError(message string, code int) error {
 		Code:  code,
 	}
 	return s.sendResponse(errorResponse)
+}
+
+// processDictionaryRequest handles dictionary management requests
+func (s *Server) processDictionaryRequest(rawRequest map[string]interface{}, action string) error {
+	log.Debugf("Processing dictionary request: action=%s", action)
+
+	if s.runtimeLoader == nil {
+		log.Debug("Dictionary management not available - runtimeLoader is nil")
+		return s.sendResponse(&DictionaryResponse{
+			Status: "error",
+			Error:  "Dictionary management not available",
+		})
+	}
+
+	log.Debugf("RuntimeLoader is available, processing action: %s", action)
+
+	switch action {
+	case "get_info":
+		currentChunks, availableChunks, err := s.runtimeLoader.GetCurrentDictionaryInfo()
+		if err != nil {
+			return s.sendResponse(&DictionaryResponse{
+				Status: "error",
+				Error:  err.Error(),
+			})
+		}
+		return s.sendResponse(&DictionaryResponse{
+			Status:          "ok",
+			CurrentChunks:   currentChunks,
+			AvailableChunks: availableChunks,
+		})
+
+	case "get_options":
+		options, err := s.runtimeLoader.GetDictionarySizeOptions()
+		if err != nil {
+			return s.sendResponse(&DictionaryResponse{
+				Status: "error",
+				Error:  err.Error(),
+			})
+		}
+		// Convert dictionary options to server options
+		serverOptions := make([]DictionarySizeOption, len(options))
+		for i, opt := range options {
+			serverOptions[i] = DictionarySizeOption{
+				ChunkCount: opt.ChunkCount,
+				WordCount:  opt.WordCount,
+				SizeLabel:  opt.SizeLabel,
+			}
+		}
+		return s.sendResponse(&DictionaryResponse{
+			Status:  "ok",
+			Options: serverOptions,
+		})
+
+	case "set_size":
+		chunkCount, exists := rawRequest["chunk_count"]
+		if !exists {
+			return s.sendResponse(&DictionaryResponse{
+				Status: "error",
+				Error:  "chunk_count required for set_size action",
+			})
+		}
+
+		var count int
+		switch v := chunkCount.(type) {
+		case int:
+			count = v
+		case int64:
+			count = int(v)
+		case float64:
+			count = int(v)
+		case string:
+			if parsedCount, err := strconv.Atoi(v); err == nil {
+				count = parsedCount
+			} else {
+				return s.sendResponse(&DictionaryResponse{
+					Status: "error",
+					Error:  "invalid chunk_count format",
+				})
+			}
+		default:
+			return s.sendResponse(&DictionaryResponse{
+				Status: "error",
+				Error:  fmt.Sprintf("invalid chunk_count type: %T", v),
+			})
+		}
+
+		if err := s.runtimeLoader.SetDictionarySize(count); err != nil {
+			return s.sendResponse(&DictionaryResponse{
+				Status: "error",
+				Error:  err.Error(),
+			})
+		}
+
+		return s.sendResponse(&DictionaryResponse{
+			Status: "ok",
+		})
+
+	case "get_chunk_count":
+		_, availableChunks, err := s.runtimeLoader.GetCurrentDictionaryInfo()
+		if err != nil {
+			return s.sendResponse(&ConfigResponse{
+				Status: "error",
+				Error:  err.Error(),
+			})
+		}
+
+		return s.sendResponse(&ConfigResponse{
+			Status:          "ok",
+			AvailableChunks: availableChunks,
+		})
+
+	default:
+		return s.sendResponse(&DictionaryResponse{
+			Status: "error",
+			Error:  fmt.Sprintf("unknown action: %s", action),
+		})
+	}
 }

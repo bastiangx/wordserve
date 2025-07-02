@@ -1,0 +1,19 @@
+[server]
+  max_limit = 50
+  min_prefix = 1
+  max_prefix = 60
+  enable_filter = true
+
+[dict]
+  max_words = 50000
+  chunk_size = 10000
+  max_hot_words = 20000
+  min_frequency_threshold = 20
+  min_frequency_short_prefix = 24
+  max_word_count_validation = 1000000
+
+[cli]
+  default_limit = 24
+  default_min_len = 1
+  default_max_len = 24
+  default_no_filter = false
