@@ -27,8 +27,8 @@ func NewHotCache(maxWords int) *HotCache {
 }
 
 func (hc *HotCache) Search(lowerPrefix string, minThreshold int) []patricia.Prefix {
-	hc.mu.RLock()
-	defer hc.mu.RUnlock()
+	hc.mu.Lock() // Changed to write lock for markAccessed
+	defer hc.mu.Unlock()
 
 	var results []patricia.Prefix
 
@@ -44,7 +44,8 @@ func (hc *HotCache) Search(lowerPrefix string, minThreshold int) []patricia.Pref
 			return nil
 		}
 
-		hc.markAccessed(word)
+		// Don't create new string allocations here
+		hc.markAccessedUnsafe(word)
 		results = append(results, p)
 		return nil
 	})
@@ -72,7 +73,7 @@ func (hc *HotCache) Populate(trie *patricia.Trie) {
 			return nil
 		}
 
-		word := internString(string(prefix))
+		word := string(prefix)
 		score := item.(int)
 
 		rank := uint16(65536 - score)
@@ -110,6 +111,12 @@ func (hc *HotCache) Stats() map[string]int {
 }
 
 func (hc *HotCache) markAccessed(word string) {
+	hc.mu.Lock()
+	defer hc.mu.Unlock()
+	hc.markAccessedUnsafe(word)
+}
+
+func (hc *HotCache) markAccessedUnsafe(word string) {
 	hc.accessTime[word] = hc.getNextAccessTime()
 }
 
@@ -132,6 +139,35 @@ func (hc *HotCache) evictLRU() {
 	if oldestWord != "" {
 		delete(hc.hotWords, oldestWord)
 		delete(hc.accessTime, oldestWord)
+		// Remove from trie as well
+		hc.hotTrie.Delete(patricia.Prefix(oldestWord))
 		log.Debugf("Evicted word '%s' from hot cache", oldestWord)
+	}
+}
+
+// ClearAll completely clears the cache to prevent memory leaks
+func (hc *HotCache) ClearAll() {
+	hc.mu.Lock()
+	defer hc.mu.Unlock()
+	
+	// Clear all maps
+	hc.hotWords = make(map[string]uint16, hc.maxWords)
+	hc.accessTime = make(map[string]int64, hc.maxWords)
+	hc.hotTrie = patricia.NewTrie()
+	hc.accessCount = 0
+}
+
+// TrimToSize reduces cache to target size if it's grown too large
+func (hc *HotCache) TrimToSize() {
+	hc.mu.Lock()
+	defer hc.mu.Unlock()
+	
+	// If we're significantly over capacity, trim down
+	targetSize := hc.maxWords * 3 / 4 // Keep 75% of max
+	if len(hc.hotWords) > hc.maxWords {
+		// Evict multiple items to get back to target
+		for len(hc.hotWords) > targetSize {
+			hc.evictLRU()
+		}
 	}
 }

@@ -1,8 +1,6 @@
 package suggest
 
 import (
-	"strings"
-
 	"github.com/charmbracelet/log"
 	"github.com/tchap/go-patricia/v2/patricia"
 )
@@ -15,11 +13,13 @@ func SearchTrie(trie *patricia.Trie, lowerPrefix string, capitalPositions []bool
 	var suggestions []Suggestion
 
 	err := trie.VisitSubtree(patricia.Prefix(lowerPrefix), func(p patricia.Prefix, item patricia.Item) error {
-		word := internString(string(p))
-
-		if word == lowerPrefix {
+		// Avoid string conversion unless necessary
+		prefixStr := string(p)
+		if prefixStr == lowerPrefix {
 			return nil
 		}
+		
+		word := prefixStr
 
 		freq := 1
 
@@ -65,7 +65,7 @@ func SearchHotCache(hotCache *HotCache, lowerPrefix string, capitalPositions []b
 	var suggestions []Suggestion
 
 	for _, p := range prefixes {
-		word := internString(string(p))
+		word := string(p)
 		
 		// Get score from hot cache trie
 		trie := hotCache.GetTrie()
@@ -100,17 +100,4 @@ func ApplyCapitalization(word string, capitalPositions []bool) string {
 	return string(wordRunes)
 }
 
-func DeduplicateAndSort(suggestions []Suggestion) []Suggestion {
-	seen := make(map[string]bool)
-	var unique []Suggestion
-
-	for _, s := range suggestions {
-		key := strings.ToLower(s.Word)
-		if !seen[key] {
-			seen[key] = true
-			unique = append(unique, s)
-		}
-	}
-
-	return unique
-}
+// DeduplicateAndSort was removed - deduplication now happens inline during traversal
