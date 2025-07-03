@@ -18,7 +18,7 @@ func SearchTrie(trie *patricia.Trie, lowerPrefix string, capitalPositions []bool
 		if prefixStr == lowerPrefix {
 			return nil
 		}
-		
+
 		word := prefixStr
 
 		freq := 1
@@ -51,36 +51,6 @@ func SearchTrie(trie *patricia.Trie, lowerPrefix string, capitalPositions []bool
 
 	if err != nil {
 		log.Errorf("Error visiting trie subtree: %v", err)
-	}
-
-	return suggestions
-}
-
-func SearchHotCache(hotCache *HotCache, lowerPrefix string, capitalPositions []bool, minThreshold int) []Suggestion {
-	if hotCache == nil {
-		return []Suggestion{}
-	}
-
-	prefixes := hotCache.Search(lowerPrefix, minThreshold)
-	var suggestions []Suggestion
-
-	for _, p := range prefixes {
-		word := string(p)
-		
-		// Get score from hot cache trie
-		trie := hotCache.GetTrie()
-		item := trie.Get(p)
-		if item == nil {
-			continue
-		}
-		
-		score := item.(int)
-		word = ApplyCapitalization(word, capitalPositions)
-
-		suggestions = append(suggestions, Suggestion{
-			Word:      word,
-			Frequency: score,
-		})
 	}
 
 	return suggestions

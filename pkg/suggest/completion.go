@@ -40,7 +40,6 @@ type Suggestion struct {
 
 type Completer struct {
 	trie         *patricia.Trie
-	hotCache     *HotCache
 	totalWords   int
 	maxFrequency int
 	wordFreqs    map[string]int
@@ -61,7 +60,6 @@ func NewLazyCompleter(dirPath string, chunkSize, maxWords int) *Completer {
 
 	return &Completer{
 		trie:         patricia.NewTrie(),
-		hotCache:     nil, // Disable hot cache completely to prevent leaks
 		totalWords:   0,
 		maxFrequency: 0,
 		wordFreqs:    make(map[string]int),
@@ -171,9 +169,6 @@ func (c *Completer) Complete(prefix string, limit int) []Suggestion {
 		return nil
 	}
 
-	// NO SECONDARY HOT CACHE SEARCH - eliminated duplicate traversal
-	// Hot cache is now redundant with the main trie search
-
 	// Sort by frequency (highest first) - only sort what we need
 	sort.Slice(suggestions, func(i, j int) bool {
 		return suggestions[i].Frequency > suggestions[j].Frequency
@@ -212,8 +207,6 @@ func (c *Completer) Initialize() error {
 		}
 		c.syncFromLoader()
 
-		// Hot cache disabled to prevent memory leaks
-
 		return nil
 	}
 	return nil
@@ -243,10 +236,6 @@ func (c *Completer) Stop() {
 	if c.chunkLoader != nil {
 		c.chunkLoader.Stop()
 	}
-	// Clear hot cache to prevent memory leaks
-	if c.hotCache != nil {
-		c.hotCache.ClearAll()
-	}
 	// String pooling was removed
 }
 
@@ -254,24 +243,12 @@ func (c *Completer) Stop() {
 func (c *Completer) ForceCleanup() {
 	// Force garbage collection to reclaim memory
 	runtime.GC()
-
-	// Don't clear hot cache - just trim if too large
-	if c.hotCache != nil {
-		c.hotCache.TrimToSize()
-	}
 }
 
 func (c *Completer) Stats() map[string]int {
 	stats := map[string]int{
 		"totalWords":   c.totalWords,
 		"maxFrequency": c.maxFrequency,
-	}
-
-	if c.hotCache != nil {
-		cacheStats := c.hotCache.Stats()
-		for k, v := range cacheStats {
-			stats[k] = v
-		}
 	}
 
 	if c.chunkLoader != nil {
