@@ -3,7 +3,6 @@ package suggest
 import (
 	"runtime"
 	"sort"
-	"strings"
 	"sync"
 
 	"github.com/bastiangx/typr-lib/internal/utils"
@@ -15,37 +14,21 @@ import (
 )
 
 var (
-	// Remove string pooling entirely - causes more leaks than it prevents
-	wordBufferPool = sync.Pool{
-		New: func() any {
-			buf := make([]byte, 64)
-			return &buf
-		},
-	}
+	// Cache config to avoid repeated allocations
+	defaultConfig = config.DefaultConfig()
+
 	suggestionPool = sync.Pool{
 		New: func() any {
-			return make([]Suggestion, 0, 50)
+			s := make([]Suggestion, 0, defaultConfig.Server.MaxLimit)
+			return &s
 		},
 	}
 	seenWordsPool = sync.Pool{
 		New: func() any {
-			return make(map[string]bool, 100)
+			return make(map[string]bool, defaultConfig.Server.MaxLimit*2)
 		},
 	}
-	capitalPool = sync.Pool{
-		New: func() any {
-			buf := make([]bool, 64)
-			return &buf
-		},
-	}
-	// Cache config to avoid repeated allocations
-	defaultConfig = config.DefaultConfig()
 )
-
-// Remove string interning entirely - it's causing memory leaks
-// func internString(s string) string { return s }
-
-// String pooling removed
 
 type Suggestion struct {
 	Word            string `msgpack:"w"`
@@ -110,22 +93,8 @@ func (c *Completer) Complete(prefix string, limit int) []Suggestion {
 		}
 	}
 
-	// Extract lowercase prefix for trie lookup
-	lowerPrefix := strings.ToLower(prefix)
-
-	// Get capital positions from pool to avoid allocation
-	capitalBuf := capitalPool.Get().(*[]bool)
-	defer capitalPool.Put(capitalBuf)
-	capitalPositions := (*capitalBuf)[:0]
-	if cap(*capitalBuf) < len(prefix) {
-		*capitalBuf = make([]bool, len(prefix))
-		capitalPositions = *capitalBuf
-	} else {
-		capitalPositions = (*capitalBuf)[:len(prefix)]
-	}
-	for i, r := range prefix {
-		capitalPositions[i] = r >= 'A' && r <= 'Z'
-	}
+	// Extract capitalization info from the original prefix
+	lowerPrefix, capitalInfo := utils.ExtractCapitalInfo(prefix)
 
 	// Use cached config to avoid allocations
 	minFrequencyThreshold := defaultConfig.Dict.MinFreqThreshold
@@ -134,8 +103,8 @@ func (c *Completer) Complete(prefix string, limit int) []Suggestion {
 	}
 
 	// Get suggestions slice from pool and reset it
-	suggestions := suggestionPool.Get().([]Suggestion)
-	suggestions = suggestions[:0]
+	suggestionsPtr := suggestionPool.Get().(*[]Suggestion)
+	suggestions := (*suggestionsPtr)[:0]
 	// Don't use defer - we return the slice directly
 
 	// Get seen words map from pool
@@ -147,28 +116,28 @@ func (c *Completer) Complete(prefix string, limit int) []Suggestion {
 		}
 		seenWordsPool.Put(seenWords)
 	}()
-	
-	// Primary trie search
+
+	// Primary trie search - NO capitalization processing during traversal
 	err := activeTrie.VisitSubtree(patricia.Prefix(lowerPrefix), func(p patricia.Prefix, item patricia.Item) error {
 		// Stop early if we have enough results to avoid unnecessary work
 		if len(suggestions) >= limit*2 {
 			return nil
 		}
-		
+
 		// CRITICAL FIX: Avoid string conversion unless absolutely necessary
 		// Compare prefix directly as bytes to avoid allocation
 		if len(p) == len(lowerPrefix) && string(p) == lowerPrefix {
 			return nil
 		}
-		
+
 		// Only convert to string when we actually need it
 		prefixStr := string(p)
-		
+
 		// Check if we've already seen this word
 		if seenWords[prefixStr] {
 			return nil
 		}
-		
+
 		freq := 1
 		switch v := item.(type) {
 		case int:
@@ -186,17 +155,13 @@ func (c *Completer) Complete(prefix string, limit int) []Suggestion {
 		if freq < minFrequencyThreshold {
 			return nil
 		}
-		
+
 		// Mark as seen
 		seenWords[prefixStr] = true
-		
-		// MINIMAL capitalization - avoid allocations when possible
-		word := prefixStr
-		// Skip capitalization for now to eliminate allocations
-		// TODO: Implement byte-level capitalization if needed
 
+		// Store the lowercase word - capitalization applied later
 		suggestions = append(suggestions, Suggestion{
-			Word:      word,
+			Word:      prefixStr,
 			Frequency: freq,
 		})
 		return nil
@@ -219,13 +184,20 @@ func (c *Completer) Complete(prefix string, limit int) []Suggestion {
 		suggestions = suggestions[:limit]
 	}
 
+	// Apply capitalization to final results - this is much more efficient
+	// than doing it during trie traversal
+	for i := range suggestions {
+		suggestions[i].Word = utils.ApplyCapitalization(suggestions[i].Word, capitalInfo)
+	}
+
 	// Create a copy to return since we can't return pooled slice
 	result := make([]Suggestion, len(suggestions))
 	copy(result, suggestions)
-	
+
 	// Return slice to pool
-	suggestionPool.Put(suggestions)
-	
+	*suggestionsPtr = suggestions[:0] // Reset the slice
+	suggestionPool.Put(suggestionsPtr)
+
 	return result
 }
 
@@ -282,7 +254,7 @@ func (c *Completer) Stop() {
 func (c *Completer) ForceCleanup() {
 	// Force garbage collection to reclaim memory
 	runtime.GC()
-	
+
 	// Don't clear hot cache - just trim if too large
 	if c.hotCache != nil {
 		c.hotCache.TrimToSize()
