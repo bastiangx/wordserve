@@ -1,5 +1,4 @@
 # ide
-.idea/
 .idea
 .vscode/
 
@@ -8,14 +7,3 @@
 
 # bin
 *.bin
-/target
-bin/
-data/unigrams.bin
-data/word_trie.bin
-
-# script related
-data/cleaned-texts/
-
-# py env
-.venv
-todo.md
