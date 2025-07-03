@@ -90,8 +90,7 @@ func (s *Server) Start() error {
 				log.Debug("Client disconnected")
 				return nil
 			}
-			log.Errorf("Processing completion request: %v", err)
-			return err
+			continue
 		}
 	}
 }
@@ -101,7 +100,7 @@ func (s *Server) processCompletionRequest() error {
 	// Only reload config every 100 requests to reduce filesystem load
 	s.requestCount++
 	if s.requestCount%100 == 0 {
-		s.reloadConfig() // Ignore errors to avoid blocking requests
+		s.reloadConfig()
 	}
 
 	// Force cleanup every 50 requests

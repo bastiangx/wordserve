@@ -36,9 +36,9 @@ func NewInputHandler(completer completion.ICompleter, minLength, maxLength, limi
 
 // Start begins the CLI input loop
 func (h *InputHandler) Start() error {
-	log.Print("Starting CLI")
+	log.Print("Typer CLI [BETA]")
 	reader := bufio.NewReader(os.Stdin)
-	log.Print("Enter prefixes for completion (Ctrl+C to exit):")
+	log.Print("type something, press enter to see the suggestions (Ctrl+C to exit):")
 
 	for {
 		log.Print("> ")
@@ -66,7 +66,7 @@ func (h *InputHandler) handleInput(prefix string) {
 			completer.ForceCleanup()
 		}
 	}
-	
+
 	if len(prefix) < h.minPrefixLength {
 		log.Errorf("Prefix too short: %s", prefix)
 		return
