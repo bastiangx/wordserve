@@ -10,55 +10,37 @@ import (
 
 // RuntimeLoader manages dynamic loading/unloading of dictionary chunks during runtime
 type RuntimeLoader struct {
-	chunkLoader        *ChunkLoader
-	targetChunks       int
-	availableChunks    []ChunkInfo
-	chunksCached       bool
-	mu                 sync.RWMutex
+	chunkLoader  *Loader
+	targetChunks int
+	mu           sync.RWMutex
 }
 
 // NewRuntimeLoader creates a new runtime loader
-func NewRuntimeLoader(chunkLoader *ChunkLoader) *RuntimeLoader {
+func NewRuntimeLoader(chunkLoader *Loader) *RuntimeLoader {
 	return &RuntimeLoader{
 		chunkLoader:  chunkLoader,
-		targetChunks: 5, // Default to 5 chunks (50K words)
+		targetChunks: 0,
 	}
 }
 
 // GetAvailableChunkCount returns the total number of available chunk files
 func (rl *RuntimeLoader) GetAvailableChunkCount() (int, error) {
-	rl.mu.Lock()
-	defer rl.mu.Unlock()
-	
-	if !rl.chunksCached {
-		chunks, err := rl.chunkLoader.GetAvailableChunks()
-		if err != nil {
-			return 0, err
-		}
-		rl.availableChunks = chunks
-		rl.chunksCached = true
+	chunks, err := rl.chunkLoader.GetAvailable()
+	if err != nil {
+		return 0, err
 	}
-
-	return len(rl.availableChunks), nil
+	return len(chunks), nil
 }
 
 // GetMaxWordsAvailable returns the maximum number of words that can be loaded
 func (rl *RuntimeLoader) GetMaxWordsAvailable() (int, error) {
-	rl.mu.RLock()
-	defer rl.mu.RUnlock()
-	
-	if !rl.chunksCached {
-		// Need to load chunks first
-		rl.mu.RUnlock()
-		_, err := rl.GetAvailableChunkCount()
-		if err != nil {
-			return 0, err
-		}
-		rl.mu.RLock()
+	chunks, err := rl.chunkLoader.GetAvailable()
+	if err != nil {
+		return 0, err
 	}
 
 	totalWords := 0
-	for _, chunk := range rl.availableChunks {
+	for _, chunk := range chunks {
 		totalWords += chunk.WordCount
 	}
 
@@ -68,24 +50,16 @@ func (rl *RuntimeLoader) GetMaxWordsAvailable() (int, error) {
 // SetDictionarySize updates the dictionary to load the specified number of chunks
 // chunks should be between 1 and the maximum available chunks
 func (rl *RuntimeLoader) SetDictionarySize(targetChunks int) error {
-	rl.mu.Lock()
-	defer rl.mu.Unlock()
-
 	if targetChunks < 1 {
-		return fmt.Errorf("minimum dictionary size is 1 chunk (10K words)")
+		return fmt.Errorf("minimum dictionary size is 1 chunk")
 	}
 
-	if !rl.chunksCached {
-		chunks, err := rl.chunkLoader.GetAvailableChunks()
-		if err != nil {
-			return fmt.Errorf("failed to get available chunks: %w", err)
-		}
-		rl.availableChunks = chunks
-		rl.chunksCached = true
+	chunks, err := rl.chunkLoader.GetAvailable()
+	if err != nil {
+		return fmt.Errorf("failed to get available chunks: %w", err)
 	}
-
-	if targetChunks > len(rl.availableChunks) {
-		return fmt.Errorf("requested %d chunks but only %d are available", targetChunks, len(rl.availableChunks))
+	if targetChunks > len(chunks) {
+		return fmt.Errorf("requested %d chunks but only %d are available", targetChunks, len(chunks))
 	}
 
 	currentStats := rl.chunkLoader.GetStats()
@@ -93,32 +67,33 @@ func (rl *RuntimeLoader) SetDictionarySize(targetChunks int) error {
 
 	log.Debugf("Setting dictionary size: current=%d chunks, target=%d chunks", currentChunks, targetChunks)
 
-	if targetChunks > currentChunks {
-		// Load more chunks
-		return rl.loadAdditionalChunks(targetChunks - currentChunks)
-	} else if targetChunks < currentChunks {
-		// Unload excess chunks
-		return rl.unloadExcessChunks(currentChunks - targetChunks)
-	}
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
 
-	// Already at target size
+	if targetChunks > currentChunks {
+		err := rl.loadAdditionalChunks(targetChunks - currentChunks)
+		if err != nil {
+			return err
+		}
+	} else if targetChunks < currentChunks {
+		err := rl.unloadExcessChunks(currentChunks - targetChunks)
+		if err != nil {
+			return err
+		}
+	}
 	rl.targetChunks = targetChunks
 	return nil
 }
 
 // loadAdditionalChunks loads the specified number of additional chunks
 func (rl *RuntimeLoader) loadAdditionalChunks(additionalChunks int) error {
-	chunks, err := rl.chunkLoader.GetAvailableChunks()
+	chunks, err := rl.chunkLoader.GetAvailable()
 	if err != nil {
 		return err
 	}
-
-	// Sort chunks by ID to load in order
 	sort.Slice(chunks, func(i, j int) bool {
-		return chunks[i].ChunkID < chunks[j].ChunkID
+		return chunks[i].ID < chunks[j].ID
 	})
-
-	// Find next unloaded chunks to load
 	currentStats := rl.chunkLoader.GetStats()
 	currentChunks := currentStats.LoadedChunks
 	targetTotal := currentChunks + additionalChunks
@@ -128,16 +103,12 @@ func (rl *RuntimeLoader) loadAdditionalChunks(additionalChunks int) error {
 		if loadedCount >= additionalChunks {
 			break
 		}
-
-		// Check if this chunk is already loaded
-		if err := rl.chunkLoader.LoadSpecificChunk(chunk.ChunkID); err != nil {
-			log.Warnf("Failed to load chunk %d: %v", chunk.ChunkID, err)
+		if err := rl.chunkLoader.Load(chunk.ID); err != nil {
+			log.Warnf("Failed to load chunk %d: %v", chunk.ID, err)
 			continue
 		}
-
 		loadedCount++
 	}
-
 	rl.targetChunks = targetTotal
 	log.Debugf("Loaded %d additional chunks", loadedCount)
 	return nil
@@ -146,55 +117,31 @@ func (rl *RuntimeLoader) loadAdditionalChunks(additionalChunks int) error {
 // unloadExcessChunks unloads the specified number of chunks from the highest numbers first
 func (rl *RuntimeLoader) unloadExcessChunks(excessChunks int) error {
 	// Get currently loaded chunk IDs
-	loadedChunkIDs := rl.chunkLoader.GetLoadedChunkIDs()
-
+	loadedChunkIDs := rl.chunkLoader.GetLoadedIDs()
 	if len(loadedChunkIDs) == 0 {
-		return nil // Nothing to unload
+		return nil
 	}
-
-	// Sort loaded chunks by ID in descending order (highest first)
 	sort.Sort(sort.Reverse(sort.IntSlice(loadedChunkIDs)))
-
-	// Unload chunks starting from the highest IDs
 	unloadedCount := 0
 	for _, chunkID := range loadedChunkIDs {
 		if unloadedCount >= excessChunks {
 			break
 		}
-
-		if err := rl.unloadChunk(chunkID); err != nil {
+		if err := rl.chunkLoader.Evict(chunkID); err != nil {
 			log.Warnf("Failed to unload chunk %d: %v", chunkID, err)
 			continue
 		}
-
 		unloadedCount++
 	}
-
 	rl.targetChunks -= excessChunks
 	log.Debugf("Unloaded %d chunks", unloadedCount)
 	return nil
 }
 
-// unloadChunk removes a specific chunk from memory
-func (rl *RuntimeLoader) unloadChunk(chunkID int) error {
-	return rl.chunkLoader.UnloadChunk(chunkID)
-}
-
-// GetCurrentDictionaryInfo returns information about the currently loaded dictionary
-func (rl *RuntimeLoader) GetCurrentDictionaryInfo() (int, int, error) {
-	stats := rl.chunkLoader.GetStats()
-	chunks, err := rl.chunkLoader.GetAvailableChunks()
-	if err != nil {
-		return 0, 0, err
-	}
-
-	return stats.LoadedChunks, len(chunks), nil
-}
-
 // GetDictionarySizeOptions returns the available dictionary size options
 // Returns array of chunk counts and their corresponding word counts
 func (rl *RuntimeLoader) GetDictionarySizeOptions() ([]DictionarySizeOption, error) {
-	chunks, err := rl.chunkLoader.GetAvailableChunks()
+	chunks, err := rl.chunkLoader.GetAvailable()
 	if err != nil {
 		return nil, err
 	}
@@ -210,7 +157,6 @@ func (rl *RuntimeLoader) GetDictionarySizeOptions() ([]DictionarySizeOption, err
 			SizeLabel:  fmt.Sprintf("%dK words", totalWords/1000),
 		})
 	}
-
 	return options, nil
 }
 

@@ -2,43 +2,37 @@ package dictionary
 
 import (
 	"encoding/binary"
-	"fmt"
+	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/bastiangx/typr-lib/pkg/config"
 	"github.com/charmbracelet/log"
 )
 
-// FileFormat represents different dictionary file formats
+// FileFormat shows file format types for dictionaries
 type FileFormat int
 
 const (
 	FormatUnknown FileFormat = iota
-	FormatTrie                // Binary trie format
-	FormatChunk              // Chunked binary format
-	FormatText               // Plain text format
+	FormatBinary
+	FormatText
 )
 
-// FormatInfo contains metadata about a dictionary file format
+// FormatInfo has the metadata for each file format
 type FormatInfo struct {
 	Format      FileFormat
 	Description string
 	Extensions  []string
-	MinSize     int64 // Minimum expected file size in bytes
+	MinSize     int64
 }
 
 var supportedFormats = map[FileFormat]FormatInfo{
-	FormatTrie: {
-		Format:      FormatTrie,
-		Description: "Binary Trie Dictionary",
-		Extensions:  []string{".bin"},
-		MinSize:     8, // At least header + one entry
-	},
-	FormatChunk: {
-		Format:      FormatChunk,
-		Description: "Chunked Binary Dictionary",
+	FormatBinary: {
+		Format:      FormatBinary,
+		Description: "Binary Dictionary",
 		Extensions:  []string{".bin"},
 		MinSize:     4, // At least word count header
 	},
@@ -46,94 +40,90 @@ var supportedFormats = map[FileFormat]FormatInfo{
 		Format:      FormatText,
 		Description: "Plain Text Dictionary",
 		Extensions:  []string{".txt"},
-		MinSize:     1, // At least one character
+		MinSize:     1, // At least one char
 	},
 }
 
-// ValidateFileFormat checks if a file matches the expected format
+// ValidateFileFormat checks if a file matches our expected format
 func ValidateFileFormat(filename string, expectedFormat FileFormat) error {
 	fileInfo, err := os.Stat(filename)
 	if err != nil {
-		return fmt.Errorf("failed to stat file %s: %w", filename, err)
+		log.Errorf("failed to stat file %s: %v", filename, err)
+		return err
 	}
-
 	formatInfo, exists := supportedFormats[expectedFormat]
 	if !exists {
-		return fmt.Errorf("unknown format: %v", expectedFormat)
+		log.Errorf("unknown format: %v", expectedFormat)
+		return errors.New("unknown format")
 	}
-
-	// Check file size
+	// size
 	if fileInfo.Size() < formatInfo.MinSize {
-		return fmt.Errorf("file %s is too small (%d bytes) for format %s (minimum: %d bytes)",
+		log.Errorf("file %s is too small (%d bytes) for format %s (minimum: %d bytes)",
 			filename, fileInfo.Size(), formatInfo.Description, formatInfo.MinSize)
+		return errors.New("file too small")
 	}
-
-	// Check file extension
+	// extension
 	ext := strings.ToLower(filepath.Ext(filename))
-	validExt := false
-	for _, validExtension := range formatInfo.Extensions {
-		if ext == validExtension {
-			validExt = true
-			break
-		}
-	}
-	if !validExt {
-		return fmt.Errorf("file %s has invalid extension %s for format %s (expected: %v)",
+	if !slices.Contains(formatInfo.Extensions, ext) {
+		log.Errorf("file %s has invalid extension %s for format %s (expected: %v)",
 			filename, ext, formatInfo.Description, formatInfo.Extensions)
+		return errors.New("invalid file extension")
 	}
-
-	// Format-specific validation
 	switch expectedFormat {
-	case FormatTrie, FormatChunk:
+	case FormatBinary:
 		return validateBinaryFormat(filename)
 	case FormatText:
 		return validateTextFormat(filename)
 	}
-
 	return nil
 }
 
-// validateBinaryFormat validates binary dictionary files
+// validateBinaryFormat checks if binary files are in the expected format
 func validateBinaryFormat(filename string) error {
 	file, err := os.Open(filename)
 	if err != nil {
-		return fmt.Errorf("failed to open file %s: %w", filename, err)
+		log.Errorf("failed to open file %s: %v", filename, err)
+		return err
 	}
 	defer file.Close()
 
-	// Check if we can read the header (word count)
+	// check if we can read the header (word count)
 	var wordCount int32
 	if err := binary.Read(file, binary.LittleEndian, &wordCount); err != nil {
-		return fmt.Errorf("failed to read header from %s: %w", filename, err)
+		log.Errorf("failed to read header from %s: %v", filename, err)
+		return err
 	}
 
 	// Validate word count is reasonable
 	if wordCount < 0 {
-		return fmt.Errorf("invalid word count in %s: %d (negative)", filename, wordCount)
+		log.Errorf("invalid word count in %s: %d (negative)", filename, wordCount)
+		return errors.New("invalid word count")
 	}
-
 	cfg := config.DefaultConfig()
 	if wordCount > int32(cfg.Dict.MaxWordCountValidation) {
-		return fmt.Errorf("suspicious word count in %s: %d (too large, max: %d)", filename, wordCount, cfg.Dict.MaxWordCountValidation)
+		log.Errorf("questionable word count in %s: %d (too large, max: %d)", filename, wordCount, cfg.Dict.MaxWordCountValidation)
+		return errors.New("word count too large")
 	}
-
 	log.Debugf("Binary file %s validated: %d words", filename, wordCount)
 	return nil
 }
 
-// validateTextFormat validates text dictionary files
+// validateTextFormat confirms text dictionary files
 func validateTextFormat(filename string) error {
 	file, err := os.Open(filename)
 	if err != nil {
-		return fmt.Errorf("failed to open file %s: %w", filename, err)
+		log.Errorf("failed to open file %s: %v", filename, err)
+		return err
 	}
 	defer file.Close()
 
-	// Just check if it's readable - more specific validation can be added later
+	// Just checks if it's readable
+	// TODO: more and specific validation can be added later
 	buffer := make([]byte, 1024)
 	_, err = file.Read(buffer)
 	if err != nil {
-		return fmt.Errorf("failed to read from text file %s: %w", filename, err)
+		log.Errorf("failed to read from text file %s: %v", filename, err)
+		return err
 	}
 
 	log.Debugf("Text file %s validated", filename)
@@ -143,30 +133,21 @@ func validateTextFormat(filename string) error {
 // DetectFileFormat attempts to detect the format of a file
 func DetectFileFormat(filename string) (FileFormat, error) {
 	ext := strings.ToLower(filepath.Ext(filename))
-	basename := strings.ToLower(filepath.Base(filename))
 
-	// Check for chunk files by naming pattern
-	if strings.HasPrefix(basename, "dict_") && ext == ".bin" {
-		if err := ValidateFileFormat(filename, FormatChunk); err == nil {
-			return FormatChunk, nil
-		}
-	}
-
-	// Check for regular trie files
 	if ext == ".bin" {
-		if err := ValidateFileFormat(filename, FormatTrie); err == nil {
-			return FormatTrie, nil
+		if err := ValidateFileFormat(filename, FormatBinary); err == nil {
+			return FormatBinary, nil
 		}
 	}
-
-	// Check for text files
 	if ext == ".txt" {
 		if err := ValidateFileFormat(filename, FormatText); err == nil {
 			return FormatText, nil
 		}
 	}
-
-	return FormatUnknown, fmt.Errorf("unable to detect format for file %s", filename)
+	return FormatUnknown, func() error {
+		log.Errorf("unable to detect format for file %s", filename)
+		return errors.New("unable to detect format")
+	}()
 }
 
 // GetFormatInfo returns information about a specific format
