@@ -3,70 +3,79 @@ package suggest
 import (
 	"runtime"
 	"sort"
-	"sync"
 
 	"github.com/bastiangx/typr-lib/internal/utils"
 	"github.com/bastiangx/typr-lib/pkg/config"
 	"github.com/bastiangx/typr-lib/pkg/dictionary"
-	"github.com/charmbracelet/log"
 
 	"github.com/tchap/go-patricia/v2/patricia"
 )
 
-var (
-	// Cache config to avoid repeated allocations
-	defaultConfig = config.DefaultConfig()
+var defaultConfig = &config.Config{Server: config.ServerConfig{MaxLimit: 64, MinPrefix: 1, MaxPrefix: 60, EnableFilter: true}, Dict: config.DictConfig{
+	MaxWords:               50000,
+	ChunkSize:              10000,
+	MinFreqThreshold:       20,
+	MinFreqShortPrefix:     24,
+	MaxWordCountValidation: 1000000,
+}, CLI: config.CliConfig{DefaultLimit: 24, DefaultMinLen: 1, DefaultMaxLen: 24, DefaultNoFilter: false}}
 
-	suggestionPool = sync.Pool{
-		New: func() any {
-			s := make([]Suggestion, 0, defaultConfig.Server.MaxLimit)
-			return &s
-		},
-	}
-	seenWordsPool = sync.Pool{
-		New: func() any {
-			return make(map[string]bool, defaultConfig.Server.MaxLimit*2)
-		},
-	}
-)
-
+// Suggestion represents a word completion result with its frequency ranking.
 type Suggestion struct {
-	Word            string `msgpack:"w"`
-	Frequency       int    `msgpack:"f"`
-	WasCorrected    bool   `msgpack:"wc,omitempty"`
-	OriginalPrefix  string `msgpack:"op,omitempty"`
-	CorrectedPrefix string `msgpack:"cp,omitempty"`
+	Word      string `msgpack:"w"`
+	Frequency int    `msgpack:"f"`
 }
 
+// Completer provides trie-based word completion with lazy loading support.
+//
+// Completer can operate in two modes: static mode where words are added
+// individually via [AddWord], or lazy mode where words are loaded from
+// chunked binary files as needed. The lazy mode is particularly useful
+// for large dictionaries that exceed memory constraints.
+//
+// The completer automatically manages a fallback trie when the chunk loader
+// cannot provide an active trie, ensuring consistent operation across
+// different dictionary states.
 type Completer struct {
-	trie         *patricia.Trie
-	totalWords   int
-	maxFrequency int
-	wordFreqs    map[string]int
-	chunkLoader  *dictionary.ChunkLoader
+	trie               *patricia.Trie
+	totalWords         int
+	maxFrequency       int
+	wordFreqs          map[string]int
+	chunkLoader        *dictionary.Loader
+	cachedFallbackTrie *patricia.Trie
+	fallbackBuilt      bool
 }
 
+// NewCompleter creates a new completer for static word addition.
+//
+// The returned completer starts with an empty dictionary and words must be
+// added individually using [AddWord]. This mode is suitable for smaller
+// dictionaries or when words are generated dynamically.
 func NewCompleter() *Completer {
 	return &Completer{
-		trie:         patricia.NewTrie(),
-		totalWords:   0,
-		maxFrequency: 0,
-		wordFreqs:    make(map[string]int),
+		trie:      patricia.NewTrie(),
+		wordFreqs: make(map[string]int),
 	}
 }
 
+// NewLazyCompleter creates a completer with lazy loading from chunked binary files.
+//
+// NewLazyCompleter sets up a completer that loads dictionary data incrementally
+// from binary files in the specified directory. The maxWords parameter controls
+// the total dictionary size, while actual loading is deferred until [Initialize]
+// is called.
+//
+// This mode is recommended for large dictionaries where loading all words
+// into memory at startup would be prohibitive. The chunk loader manages
+// memory usage by loading only the most relevant portions of the dictionary.
 func NewLazyCompleter(dirPath string, chunkSize, maxWords int) *Completer {
-	loader := dictionary.NewChunkLoader(dirPath, chunkSize, maxWords)
-
 	return &Completer{
-		trie:         patricia.NewTrie(),
-		totalWords:   0,
-		maxFrequency: 0,
-		wordFreqs:    make(map[string]int),
-		chunkLoader:  loader,
+		trie:        patricia.NewTrie(),
+		wordFreqs:   make(map[string]int),
+		chunkLoader: dictionary.NewLoader(dirPath, maxWords),
 	}
 }
 
+//go:inline
 func (c *Completer) AddWord(word string, frequency int) {
 	c.trie.Insert(patricia.Prefix(word), frequency)
 	c.wordFreqs[word] = frequency
@@ -76,133 +85,170 @@ func (c *Completer) AddWord(word string, frequency int) {
 	}
 }
 
+// Complete returns word suggestions for a given prefix.
+//
+// Complete searches the completer's dictionary for words beginning with the
+// specified prefix, applying frequency thresholds and capitalization patterns.
+// Results are sorted by frequency in descending order and limited to the
+// requested number of suggestions.
+//
+// The prefix parameter preserves the original capitalization, which is applied
+// to all returned suggestions. For example, searching for "HEL" will return
+// suggestions like "HELLO" and "HELP" with matching capitalization.
+//
+// If the completer uses a chunk loader and no active trie is available,
+// Complete builds and caches a fallback trie from loaded word frequencies.
+// This cached trie is reused across subsequent calls for efficiency.
+//
+// Frequency thresholds are automatically adjusted based on prefix length:
+// shorter prefixes (≤2 characters) use a higher threshold to reduce noise,
+// while longer prefixes use the standard threshold for broader results.
+//
+// Complete returns an empty slice if no matches are found or if an error
+// occurs during trie traversal.
 func (c *Completer) Complete(prefix string, limit int) []Suggestion {
-	// Get the active trie (either our own or from chunk loader)
-	activeTrie := c.trie
-	if c.chunkLoader != nil {
-		activeTrie = c.chunkLoader.GetTrie()
-		if activeTrie == nil {
-			// Fall back to building trie from word frequencies
-			activeTrie = patricia.NewTrie()
-			wordFreqs := c.chunkLoader.GetWordFreqs()
-			for word, freq := range wordFreqs {
-				activeTrie.Insert(patricia.Prefix(word), freq)
-			}
-		}
-	}
-
-	// Extract capitalization info from the original prefix
-	lowerPrefix, capitalInfo := utils.ExtractCapitalInfo(prefix)
-
-	// Use cached config to avoid allocations
-	minFrequencyThreshold := defaultConfig.Dict.MinFreqThreshold
-	if len(lowerPrefix) <= 2 || utils.IsRepetitive(lowerPrefix) {
-		minFrequencyThreshold = defaultConfig.Dict.MinFreqShortPrefix
-	}
-
-	// Get suggestions slice from pool and reset it
-	suggestionsPtr := suggestionPool.Get().(*[]Suggestion)
-	suggestions := (*suggestionsPtr)[:0]
-	// Don't use defer - we return the slice directly
-
-	// Get seen words map from pool
-	seenWords := seenWordsPool.Get().(map[string]bool)
-	defer func() {
-		// Clear map before returning to pool
-		for k := range seenWords {
-			delete(seenWords, k)
-		}
-		seenWordsPool.Put(seenWords)
-	}()
-
-	// Primary trie search - NO capitalization processing during traversal
-	err := activeTrie.VisitSubtree(patricia.Prefix(lowerPrefix), func(p patricia.Prefix, item patricia.Item) error {
-		// Stop early if we have enough results to avoid unnecessary work
-		if len(suggestions) >= limit*2 {
-			return nil
-		}
-
-		// CRITICAL FIX: Avoid string conversion unless absolutely necessary
-		// Compare prefix directly as bytes to avoid allocation
-		if len(p) == len(lowerPrefix) && string(p) == lowerPrefix {
-			return nil
-		}
-
-		// Only convert to string when we actually need it
-		prefixStr := string(p)
-
-		// Check if we've already seen this word
-		if seenWords[prefixStr] {
-			return nil
-		}
-
-		freq := 1
-		switch v := item.(type) {
-		case int:
-			freq = v
-		case int32:
-			freq = int(v)
-		case uint32:
-			freq = int(v)
-		case float64:
-			freq = int(v)
-		default:
-			log.Errorf("Unknown item type: %T for word %s", item, p)
-		}
-
-		if freq < minFrequencyThreshold {
-			return nil
-		}
-
-		// Mark as seen
-		seenWords[prefixStr] = true
-
-		// Store the lowercase word - capitalization applied later
-		suggestions = append(suggestions, Suggestion{
-			Word:      prefixStr,
-			Frequency: freq,
-		})
-		return nil
-	})
-	if err != nil {
-		log.Errorf("Error visiting trie subtree: %v", err)
-		return nil
-	}
-
-	// Sort by frequency (highest first) - only sort what we need
-	sort.Slice(suggestions, func(i, j int) bool {
-		return suggestions[i].Frequency > suggestions[j].Frequency
-	})
-
-	// Limit results early to avoid copying unnecessary data
-	if len(suggestions) > limit && limit > 0 {
-		suggestions = suggestions[:limit]
-	}
-
-	// Apply capitalization to final results - this is much more efficient
-	// than doing it during trie traversal
-	for i := range suggestions {
-		suggestions[i].Word = utils.ApplyCapitalization(suggestions[i].Word, capitalInfo)
-	}
-
-	// Create a copy to return since we can't return pooled slice
-	result := make([]Suggestion, len(suggestions))
-	copy(result, suggestions)
-
-	// Return slice to pool
-	*suggestionsPtr = suggestions[:0] // Reset the slice
-	suggestionPool.Put(suggestionsPtr)
-
-	return result
+	return c.complete(prefix, limit)
 }
 
+//go:inline
+func (c *Completer) complete(prefix string, limit int) []Suggestion {
+	activeTrie := c.getActiveTrie()
+	lowerPrefix, capitalInfo := utils.GetCapitalDetails(prefix)
+	minFrequencyThreshold := c.getFrequencyThreshold(lowerPrefix)
+
+	suggestions := SearchTrie(activeTrie, lowerPrefix, minFrequencyThreshold, limit)
+	c.sortAndLimitSuggestions(&suggestions, limit)
+	c.applyCapitalization(suggestions, capitalInfo)
+
+	return suggestions
+}
+
+//go:inline
+func (c *Completer) getActiveTrie() *patricia.Trie {
+	if c.chunkLoader == nil {
+		return c.trie
+	}
+	if activeTrie := c.chunkLoader.GetTrie(); activeTrie != nil {
+		return activeTrie
+	}
+	return c.getFallbackTrie()
+}
+
+//go:inline
+func (c *Completer) getFallbackTrie() *patricia.Trie {
+	if c.fallbackBuilt {
+		return c.cachedFallbackTrie
+	}
+	return c.buildFallbackTrie()
+}
+
+func (c *Completer) buildFallbackTrie() *patricia.Trie {
+	c.cachedFallbackTrie = patricia.NewTrie()
+	wordFreqs := c.chunkLoader.GetWordFreqs()
+	for word, freq := range wordFreqs {
+		c.cachedFallbackTrie.Insert(patricia.Prefix(word), freq)
+	}
+	c.fallbackBuilt = true
+	return c.cachedFallbackTrie
+}
+
+//go:inline
+func (c *Completer) getFrequencyThreshold(lowerPrefix string) int {
+	if len(lowerPrefix) <= 2 || utils.IsRepetitive(lowerPrefix) {
+		return defaultConfig.Dict.MinFreqShortPrefix
+	}
+	return defaultConfig.Dict.MinFreqThreshold
+}
+
+func (c *Completer) sortAndLimitSuggestions(suggestions *[]Suggestion, limit int) {
+	sort.Slice(*suggestions, func(i, j int) bool {
+		return (*suggestions)[i].Frequency > (*suggestions)[j].Frequency
+	})
+	if len(*suggestions) > limit && limit > 0 {
+		*suggestions = (*suggestions)[:limit]
+	}
+}
+
+//go:inline
+func (c *Completer) applyCapitalization(suggestions []Suggestion, capitalInfo *utils.CapitalInfo) {
+	if capitalInfo == nil {
+		return
+	}
+	for i := range suggestions {
+		suggestions[i].Word = utils.CapitalizeAtPositions(suggestions[i].Word, capitalInfo)
+	}
+}
+
+// CompleteWithCallback provides zero-copy completion using a callback.
+//
+// CompleteWithCallback offers the same functionality as [Complete] but uses
+// a callback mechanism to deliver results incrementally, eliminating the final
+// memory allocation for the returned slice. This makes it ideal for high-performance
+// scenarios where memory efficiency is critical.
+//
+// The callback function receives each suggestion in frequency-sorted order
+// (highest frequency first) and should return false to request early termination.
+// Capitalization is applied before calling the callback, ensuring results match
+// the original prefix casing.
+//
+// Unlike the callback-based trie functions, CompleteWithCallback sorts results
+// by frequency before delivery, providing the same ordering guarantees as [Complete].
+// However, this requires collecting all results before sorting, which uses some
+// temporary memory.
+//
+// CompleteWithCallback returns an error if trie traversal fails, or nil on success.
+// The number of suggestions delivered may be less than the limit if the callback
+// returns false or if fewer matches are found.
+func (c *Completer) CompleteWithCallback(prefix string, limit int, callback func(Suggestion) bool) error {
+	return c.completeWithCallback(prefix, limit, callback)
+}
+
+//go:inline
+func (c *Completer) completeWithCallback(prefix string, limit int, callback func(Suggestion) bool) error {
+	activeTrie := c.getActiveTrie()
+	lowerPrefix, capitalInfo := utils.GetCapitalDetails(prefix)
+	minFrequencyThreshold := c.getFrequencyThreshold(lowerPrefix)
+
+	suggestions, err := c.collectSuggestions(activeTrie, lowerPrefix, minFrequencyThreshold, limit)
+	if err != nil {
+		return err
+	}
+
+	c.sortAndLimitSuggestions(&suggestions, limit)
+	return c.deliverSuggestions(suggestions, capitalInfo, callback)
+}
+
+//go:inline
+func (c *Completer) collectSuggestions(trie *patricia.Trie, lowerPrefix string, minFrequencyThreshold, limit int) ([]Suggestion, error) {
+	suggestions := make([]Suggestion, 0, limit*2)
+	err := SearchTrieWithCallback(trie, lowerPrefix, minFrequencyThreshold, limit*2, func(s Suggestion) bool {
+		suggestions = append(suggestions, s)
+		return true
+	})
+	return suggestions, err
+}
+
+//go:inline
+func (c *Completer) deliverSuggestions(suggestions []Suggestion, capitalInfo *utils.CapitalInfo, callback func(Suggestion) bool) error {
+	for _, s := range suggestions {
+		if capitalInfo != nil {
+			s.Word = utils.CapitalizeAtPositions(s.Word, capitalInfo)
+		}
+		if !callback(s) {
+			break
+		}
+	}
+	return nil
+}
+
+//go:inline
 func (c *Completer) LoadBinaryDictionary(filename string) error {
 	return c.Initialize()
 }
 
 func (c *Completer) Initialize() error {
 	if c.chunkLoader != nil {
-		if err := c.chunkLoader.StartLazyLoading(); err != nil {
+		if err := c.chunkLoader.StartLoading(); err != nil {
 			return err
 		}
 		c.syncFromLoader()
@@ -212,45 +258,58 @@ func (c *Completer) Initialize() error {
 	return nil
 }
 
+//go:inline
 func (c *Completer) syncFromLoader() {
 	if c.chunkLoader != nil {
-		// Don't copy the entire wordFreqs map - just get stats
 		stats := c.chunkLoader.GetStats()
 		c.totalWords = stats.TotalWords
 		c.maxFrequency = stats.MaxFrequency
 	}
 }
 
+//go:inline
 func (c *Completer) LoadAllBinaries(dirPath string) error {
 	return c.Initialize()
 }
 
+//go:inline
 func (c *Completer) RequestMoreWords(additionalWords int) error {
 	if c.chunkLoader != nil {
-		return c.chunkLoader.RequestMoreChunks(additionalWords)
+		return c.chunkLoader.RequestMore(additionalWords)
 	}
-	return nil // No-op if no chunk loader
+	return nil
 }
 
+//go:inline
 func (c *Completer) Stop() {
 	if c.chunkLoader != nil {
 		c.chunkLoader.Stop()
 	}
-	// String pooling was removed
 }
 
-// ForceCleanup performs cleanup - call after every N completions
+// ForceCleanup forces GC to reclaim memory.
+//
+//go:inline
 func (c *Completer) ForceCleanup() {
-	// Force garbage collection to reclaim memory
 	runtime.GC()
 }
 
+//go:inline
 func (c *Completer) Stats() map[string]int {
-	stats := map[string]int{
-		"totalWords":   c.totalWords,
-		"maxFrequency": c.maxFrequency,
-	}
+	return c.buildStatsMap()
+}
 
+//go:inline
+func (c *Completer) buildStatsMap() map[string]int {
+	stats := make(map[string]int, 6)
+	stats["totalWords"] = c.totalWords
+	stats["maxFrequency"] = c.maxFrequency
+	c.addLoaderStats(stats)
+	return stats
+}
+
+//go:inline
+func (c *Completer) addLoaderStats(stats map[string]int) {
 	if c.chunkLoader != nil {
 		loaderStats := c.chunkLoader.GetStats()
 		stats["loadedChunks"] = loaderStats.LoadedChunks
@@ -259,10 +318,17 @@ func (c *Completer) Stats() map[string]int {
 	} else {
 		stats["chunkLoader"] = 0
 	}
-
-	return stats
 }
 
-func (c *Completer) GetChunkLoader() *dictionary.ChunkLoader {
+//go:inline
+func (c *Completer) GetChunkLoader() *dictionary.Loader {
 	return c.chunkLoader
+}
+
+// InvalidateFallbackCache clears the cached fallback trie when chunk loader state changes
+//
+//go:inline
+func (c *Completer) InvalidateFallbackCache() {
+	c.cachedFallbackTrie = nil
+	c.fallbackBuilt = false
 }
