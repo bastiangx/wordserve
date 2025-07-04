@@ -7,12 +7,12 @@ import (
 	"github.com/charmbracelet/log"
 )
 
-// Default creates a new default charm log that respects the global log level
-func Default(prefix string) *log.Logger {
+// New creates a new default charm log.
+func New(prefix string) *log.Logger {
 	return log.NewWithOptions(os.Stdout, log.Options{
 		Prefix:          prefix,
 		ReportCaller:    false,
-		ReportTimestamp: false,
+		ReportTimestamp: true,
 		Formatter:       log.TextFormatter,
 		Level:           log.GetLevel(),
 	})
