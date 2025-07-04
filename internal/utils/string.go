@@ -1,78 +1,84 @@
 package utils
 
 import (
+	"fmt"
 	"strings"
 )
 
-// CapitalInfo holds information about capitalization in a string
+// CapitalInfo holds basic info on pos and chars of capital letters in a string
 type CapitalInfo struct {
 	positions []int
 	chars     []rune
 }
 
-// ExtractCapitalInfo extracts capital letter information from a string
-// Returns the lowercase version and capitalization info
-func ExtractCapitalInfo(s string) (string, *CapitalInfo) {
+// GetCapitalDetails extracts capital letter positions and characters from a string.
+// Returns the lowercase version and cap info since we need to apply it later.
+// lowercase return is because of actual dictionary words being all lowercase at this point.
+func GetCapitalDetails(s string) (string, *CapitalInfo) {
 	var info *CapitalInfo
-
-	// First pass: check if there are any capitals to avoid allocation if not needed
 	hasCapitals := false
+
 	for _, r := range s {
 		if r >= 'A' && r <= 'Z' {
 			hasCapitals = true
 			break
 		}
 	}
-
 	if !hasCapitals {
 		return strings.ToLower(s), nil
 	}
-
-	// Only allocate if we have capitals
 	info = &CapitalInfo{
 		positions: make([]int, 0, 4),
 		chars:     make([]rune, 0, 4),
 	}
-
-	// Extract capital positions and characters
 	for i, r := range s {
 		if r >= 'A' && r <= 'Z' {
 			info.positions = append(info.positions, i)
 			info.chars = append(info.chars, r)
 		}
 	}
-
 	return strings.ToLower(s), info
 }
 
-// ApplyCapitalization applies capitalization info to a word
-func ApplyCapitalization(word string, info *CapitalInfo) string {
+// CapitalizeAtPositions applies capitalization info to a word
+// Works by replacing characters at specified positions with the corresponding capital letters.
+// If info is nil or has no positions, returns the original word.
+func CapitalizeAtPositions(word string, info *CapitalInfo) string {
 	if info == nil || len(info.positions) == 0 {
-		return word
+		return word // No allocation needed
 	}
 
 	runes := []rune(word)
-
-	// Apply capitals only if the position exists in the word
 	for i, pos := range info.positions {
 		if pos < len(runes) {
 			runes[pos] = info.chars[i]
 		}
 	}
-
 	return string(runes)
 }
 
-// ApplyCapitalizationToSuggestions applies capitalization to a slice of suggestions
-func ApplyCapitalizationToSuggestions(suggestions []string, info *CapitalInfo) []string {
+// CapitalizeWords applies capitalization simply to a slice of words.
+func CapitalizeWords(words []string, info *CapitalInfo) {
 	if info == nil || len(info.positions) == 0 {
-		return suggestions
+		return
 	}
-
-	result := make([]string, len(suggestions))
-	for i, suggestion := range suggestions {
-		result[i] = ApplyCapitalization(suggestion, info)
+	for i, word := range words {
+		words[i] = CapitalizeAtPositions(word, info)
 	}
+}
 
+// FormatWithCommas formats an integer with comma separators
+func FormatWithCommas(n int) string {
+	if n < 1000 {
+		return fmt.Sprintf("%d", n)
+	}
+	str := fmt.Sprintf("%d", n)
+	result := ""
+	for i, char := range str {
+		if i > 0 && (len(str)-i)%3 == 0 {
+			result += ","
+		}
+		result += string(char)
+	}
 	return result
 }

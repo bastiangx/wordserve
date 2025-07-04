@@ -1,3 +1,4 @@
+// Package utils implements internal functions for various ops, formats and checks.
 package utils
 
 import (
@@ -16,8 +17,6 @@ func EqualFold(a, b rune) bool {
 	if a == b {
 		return true
 	}
-
-	// Try simple ASCII case folding first (faster)
 	if a < utf8.RuneSelf && b < utf8.RuneSelf {
 		if 'A' <= a && a <= 'Z' {
 			a += 'a' - 'A'
@@ -27,8 +26,6 @@ func EqualFold(a, b rune) bool {
 		}
 		return a == b
 	}
-
-	// Use Unicode's more comprehensive case folding
 	return strings.EqualFold(string(a), string(b))
 }
 
@@ -42,7 +39,7 @@ func HasPrefixIgnoreCase(s, prefix string) bool {
 	return strings.HasPrefix(strings.ToLower(s), strings.ToLower(prefix))
 }
 
-// ContainsNumbers checks if a string contains any numeric digits
+// ContainsNumbers simply checks if a string contains any digits
 func ContainsNumbers(s string) bool {
 	for _, r := range s {
 		if unicode.IsDigit(r) {
@@ -52,7 +49,7 @@ func ContainsNumbers(s string) bool {
 	return false
 }
 
-// IsOnlyNumbers checks if a string consists entirely of numeric digits
+// IsOnlyNumbers checks if a string consists entirely of digits
 func IsOnlyNumbers(s string) bool {
 	if len(s) == 0 {
 		return false
@@ -66,7 +63,7 @@ func IsOnlyNumbers(s string) bool {
 }
 
 // ContainsSpecialChars checks if a string contains special characters
-// (non-alphanumeric characters excluding common separators)
+// (non-alphanumeric chars excluding common separators)
 func ContainsSpecialChars(s string) bool {
 	for _, r := range s {
 		if !unicode.IsLetter(r) && !unicode.IsDigit(r) && !IsSeparator(r) {
@@ -76,40 +73,11 @@ func ContainsSpecialChars(s string) bool {
 	return false
 }
 
-// IsValidInput checks if input should be processed for completions
-// Returns false for strings that are only numbers, contain special characters, or are repetitive
-func IsValidInput(s string) bool {
-	// Reject empty strings
-	if len(s) == 0 {
-		return false
-	}
-	
-	// Reject strings that are only numbers
-	if IsOnlyNumbers(s) {
-		return false
-	}
-	
-	// Reject strings that contain special characters (except separators)
-	if ContainsSpecialChars(s) {
-		return false
-	}
-	
-	// Reject repetitive strings like "dddd", "www", etc.
-	if IsRepetitive(s) {
-		return false
-	}
-	
-	return true
-}
-
 // IsRepetitive checks if a string consists of repetitive characters
-// Simple version that checks for repeated characters (e.g., "aaa", "bbb")
 func IsRepetitive(s string) bool {
 	if len(s) <= 2 {
 		return false
 	}
-	
-	// Check for simple repetition (same character repeated 3+ times)
 	firstChar := s[0]
 	for i := 1; i < len(s); i++ {
 		if s[i] != firstChar {
@@ -117,4 +85,9 @@ func IsRepetitive(s string) bool {
 		}
 	}
 	return true
+}
+
+// IsValidInput checks if input should be processed at all.
+func IsValidInput(s string) bool {
+	return len(s) > 0 && !IsOnlyNumbers(s) && !ContainsSpecialChars(s) && !IsRepetitive(s)
 }
