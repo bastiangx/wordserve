@@ -2,8 +2,6 @@ package server
 
 // MESSAGE TYPES - Completion + Config Interface
 
-// COMPLETION MESSAGES - Ultra fast prefix->suggestions
-
 // CompletionRequest - minimal completion request
 type CompletionRequest struct {
 	Id     string `msgpack:"id"`
@@ -17,12 +15,12 @@ type CompletionSuggestion struct {
 	Rank uint16 `msgpack:"r"`
 }
 
-// CompletionResponse - optimized completion response
+// CompletionResponse - completion response
 type CompletionResponse struct {
 	Id          string                 `msgpack:"id"`
 	Suggestions []CompletionSuggestion `msgpack:"s"`
 	Count       int                    `msgpack:"c"`
-	TimeTaken   int64                  `msgpack:"t"` // microseconds
+	TimeTaken   int64                  `msgpack:"t"`
 }
 
 // CONFIG MESSAGES - Settings updates (dictionary only, other configs via TOML)
@@ -44,7 +42,7 @@ type DictionarySizeOption struct {
 // DictionaryResponse - dictionary operation response
 type DictionaryResponse struct {
 	Id              string                 `msgpack:"id"`
-	Status          string                 `msgpack:"status"` // "ok" or "error"
+	Status          string                 `msgpack:"status"`
 	Error           string                 `msgpack:"error,omitempty"`
 	CurrentChunks   int                    `msgpack:"current_chunks,omitempty"`
 	AvailableChunks int                    `msgpack:"available_chunks,omitempty"`
@@ -54,7 +52,7 @@ type DictionaryResponse struct {
 // ConfigResponse - config operation response
 type ConfigResponse struct {
 	Id              string `msgpack:"id"`
-	Status          string `msgpack:"status"` // "ok" or "error"
+	Status          string `msgpack:"status"`
 	Error           string `msgpack:"error,omitempty"`
 	AvailableChunks int    `msgpack:"available_chunks,omitempty"`
 }

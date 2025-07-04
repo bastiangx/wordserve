@@ -1,3 +1,4 @@
+// Package config exposes libtyper's config structs.
 package config
 
 import (
@@ -8,13 +9,14 @@ import (
 	"github.com/charmbracelet/log"
 )
 
-// Config holds all application configuration - central point for constants
+// Config holds the entire configuration structure for libtyper.
 type Config struct {
 	Server ServerConfig `toml:"server"`
 	Dict   DictConfig   `toml:"dict"`
-	CLI    CLIConfig    `toml:"cli"`
+	CLI    CliConfig    `toml:"cli"`
 }
 
+// ServerConfig holds server related configuration options.
 type ServerConfig struct {
 	MaxLimit     int  `toml:"max_limit"`
 	MinPrefix    int  `toml:"min_prefix"`
@@ -22,40 +24,40 @@ type ServerConfig struct {
 	EnableFilter bool `toml:"enable_filter"`
 }
 
+// DictConfig holds dictionary related configuration options.
 type DictConfig struct {
-	MaxWords             int `toml:"max_words"`
-	ChunkSize            int `toml:"chunk_size"`
-	MaxHotWords          int `toml:"max_hot_words"`
-	MinFreqThreshold     int `toml:"min_frequency_threshold"`
-	MinFreqShortPrefix   int `toml:"min_frequency_short_prefix"`
+	MaxWords               int `toml:"max_words"`
+	ChunkSize              int `toml:"chunk_size"`
+	MinFreqThreshold       int `toml:"min_frequency_threshold"`
+	MinFreqShortPrefix     int `toml:"min_frequency_short_prefix"`
 	MaxWordCountValidation int `toml:"max_word_count_validation"`
 }
 
-type CLIConfig struct {
-	DefaultLimit    int `toml:"default_limit"`
-	DefaultMinLen   int `toml:"default_min_len"`
-	DefaultMaxLen   int `toml:"default_max_len"`
+// CliConfig holds cli interface related configuration options.
+type CliConfig struct {
+	DefaultLimit    int  `toml:"default_limit"`
+	DefaultMinLen   int  `toml:"default_min_len"`
+	DefaultMaxLen   int  `toml:"default_max_len"`
 	DefaultNoFilter bool `toml:"default_no_filter"`
 }
 
-// Default values - central place for all constants
+// DefaultConfig returns a Config with default values.
 func DefaultConfig() *Config {
 	return &Config{
 		Server: ServerConfig{
-			MaxLimit:     50,
+			MaxLimit:     64,
 			MinPrefix:    1,
 			MaxPrefix:    60,
 			EnableFilter: true,
 		},
 		Dict: DictConfig{
-			MaxWords:               50000,  // from main.go --words default
-			ChunkSize:              10000,  // from main.go --chunk default
-			MaxHotWords:            20000,  // from completion.go NewLazyCompleter
-			MinFreqThreshold:       20,     // from completion.go minFrequencyThreshold
-			MinFreqShortPrefix:     24,     // from completion.go short prefix threshold
-			MaxWordCountValidation: 1000000, // from formats.go binary validation
+			MaxWords:               50000,
+			ChunkSize:              10000,
+			MinFreqThreshold:       20,
+			MinFreqShortPrefix:     24,
+			MaxWordCountValidation: 1000000,
 		},
-		CLI: CLIConfig{
+		CLI: CliConfig{
 			DefaultLimit:    24,
 			DefaultMinLen:   1,
 			DefaultMaxLen:   24,
@@ -64,49 +66,44 @@ func DefaultConfig() *Config {
 	}
 }
 
-// LoadOrCreate loads config from file or creates default if missing
-func LoadOrCreate(configPath string) (*Config, error) {
-	// Create config directory if it doesn't exist
+// InitConfig loads config from file or creates default if missing
+func InitConfig(configPath string) (*Config, error) {
 	configDir := filepath.Dir(configPath)
 	if err := os.MkdirAll(configDir, 0755); err != nil {
 		return nil, err
 	}
-
-	// Check if config file exists
 	if _, err := os.Stat(configPath); os.IsNotExist(err) {
-		// Create default config file
 		config := DefaultConfig()
 		if err := SaveConfig(config, configPath); err != nil {
 			return nil, err
 		}
-		log.Debugf("Created default config file: %s", configPath)
+		log.Debugf("Created default config file at: ( %s )", configPath)
 		return config, nil
 	}
 
-	// Load existing config
 	config, err := LoadConfig(configPath)
 	if err != nil {
 		log.Warnf("Failed to load config, using defaults: %v", err)
 		return DefaultConfig(), nil
 	}
-
-	log.Debugf("Loaded config from: %s", configPath)
 	return config, nil
 }
 
-// LoadConfig loads configuration from TOML file
+// LoadConfig loads configuration from the TOML file
 func LoadConfig(configPath string) (*Config, error) {
 	var config Config
 	if _, err := toml.DecodeFile(configPath, &config); err != nil {
+		log.Errorf("Failed to decode config file: %v", err)
 		return nil, err
 	}
 	return &config, nil
 }
 
-// SaveConfig saves configuration to TOML file  
+// SaveConfig saves configuration into TOML file
 func SaveConfig(config *Config, configPath string) error {
 	file, err := os.Create(configPath)
 	if err != nil {
+		log.Errorf("Failed to create config file: %v", err)
 		return err
 	}
 	defer file.Close()
@@ -117,20 +114,19 @@ func SaveConfig(config *Config, configPath string) error {
 
 // UpdateConfig updates config values and saves to file
 func (c *Config) Update(configPath string, maxLimit, minPrefix, maxPrefix *int, enableFilter *bool) error {
-	// Update values if provided
+	server := &c.Server
+
 	if maxLimit != nil {
-		c.Server.MaxLimit = *maxLimit
+		server.MaxLimit = *maxLimit
 	}
 	if minPrefix != nil {
-		c.Server.MinPrefix = *minPrefix
+		server.MinPrefix = *minPrefix
 	}
 	if maxPrefix != nil {
-		c.Server.MaxPrefix = *maxPrefix
+		server.MaxPrefix = *maxPrefix
 	}
 	if enableFilter != nil {
-		c.Server.EnableFilter = *enableFilter
+		server.EnableFilter = *enableFilter
 	}
-
-	// Save to file
 	return SaveConfig(c, configPath)
 }
