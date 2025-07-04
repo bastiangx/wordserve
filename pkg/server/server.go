@@ -1,4 +1,4 @@
-// Package server implements MessagePack IPC for completion + config updates
+// Package server implements MessagePack IPC for completion and configuration management
 package server
 
 import (
@@ -18,72 +18,54 @@ import (
 	"github.com/vmihailenco/msgpack/v5"
 )
 
-// Server handles completion requests and config updates
+// Server handles msgpack completion requests and runtime configuration
 type Server struct {
 	completer     completion.ICompleter
 	config        *config.Config
 	configPath    string
 	runtimeLoader *dictionary.RuntimeLoader
-	// Reuse objects to prevent allocations
-	decoder      *msgpack.Decoder
-	writeMutex   sync.Mutex
-	requestCount int64
+	decoder       *msgpack.Decoder
+	buffer        *bytes.Buffer
+	encoder       *msgpack.Encoder
+	writeMutex    sync.Mutex
+	requestCount  int64
 }
 
-// NewServer creates server with configuration
+// NewServer creates a server instance with the given completer and configuration
 func NewServer(completer completion.ICompleter, cfg *config.Config, configPath string) *Server {
+	buffer := &bytes.Buffer{}
 	server := &Server{
 		completer:  completer,
 		config:     cfg,
 		configPath: configPath,
+		buffer:     buffer,
+		encoder:    msgpack.NewEncoder(buffer),
 	}
-
-	log.Debugf("Creating server with completer type: %T", completer)
-
-	// Initialize reusable MessagePack decoder
 	server.decoder = msgpack.NewDecoder(os.Stdin)
 
-	// Initialize runtime loader if completer supports it
 	if lazyCompleter, ok := completer.(*completion.Completer); ok {
-		log.Debug("Successfully cast completer to *completion.Completer")
-		// Access the chunk loader if available
 		if chunkLoader := lazyCompleter.GetChunkLoader(); chunkLoader != nil {
-			log.Debug("ChunkLoader is available, creating RuntimeLoader")
 			server.runtimeLoader = dictionary.NewRuntimeLoader(chunkLoader)
-		} else {
-			log.Debug("ChunkLoader is nil")
 		}
-	} else {
-		log.Debug("Failed to cast completer to *completion.Completer")
 	}
-
-	if server.runtimeLoader != nil {
-		log.Debug("RuntimeLoader successfully initialized")
-	} else {
-		log.Debug("RuntimeLoader is nil after initialization")
-	}
-
 	return server
 }
 
-// reloadConfig reloads configuration from TOML file
+// reloadConfig refreshes configuration from the TOML file
 func (s *Server) reloadConfig() error {
 	newConfig, err := config.LoadConfig(s.configPath)
 	if err != nil {
 		log.Warnf("Failed to reload config, keeping current: %v", err)
 		return err
 	}
-
 	s.config = newConfig
 	log.Debugf("Config reloaded from: %s", s.configPath)
 	return nil
 }
 
-// Start begins listening for completion requests
+// Start begins the main request processing loop
 func (s *Server) Start() error {
-	log.Debug("Starting MessagePack completion server")
-
-	// Main completion loop - optimized for speed
+	log.Debug("Starting server")
 	for {
 		if err := s.processCompletionRequest(); err != nil {
 			if err == io.EOF {
@@ -95,36 +77,29 @@ func (s *Server) Start() error {
 	}
 }
 
-// processCompletionRequest handles a single completion request
+// processCompletionRequest handles a single incoming request
 func (s *Server) processCompletionRequest() error {
-	// Only reload config every 100 requests to reduce filesystem load
 	s.requestCount++
 	if s.requestCount%100 == 0 {
 		s.reloadConfig()
 	}
 
-	// Force cleanup every 50 requests
 	if s.requestCount%50 == 0 {
 		if completer, ok := s.completer.(interface{ ForceCleanup() }); ok {
 			completer.ForceCleanup()
 		}
 	}
 
-	// Read MessagePack data from stdin using reusable decoder
-	var rawRequest map[string]interface{}
-	log.Debug("Waiting for request...")
+	var rawRequest map[string]any
 	if err := s.decoder.Decode(&rawRequest); err != nil {
 		log.Debugf("Decode error: %v", err)
 		return err
 	}
 
-	// Check if this is a dictionary request
 	if action, exists := rawRequest["action"]; exists {
 		return s.processDictionaryRequest(rawRequest, action.(string))
 	}
 
-	// Remove config update handling - now handled via TOML file
-	// Dictionary size updates still use msgpack for runtime changes
 	if _, hasDictSize := rawRequest["dictionary_size"]; hasDictSize {
 		return s.processDictionaryRequest(rawRequest, "set_size")
 	}
@@ -132,100 +107,29 @@ func (s *Server) processCompletionRequest() error {
 		return s.processDictionaryRequest(rawRequest, "get_chunk_count")
 	}
 
-	// Handle as completion request - direct field access to avoid marshal/unmarshal
-	var request CompletionRequest
-	if id, ok := rawRequest["id"].(string); ok {
-		request.Id = id
-	}
-	if prefix, ok := rawRequest["p"].(string); ok {
-		request.Prefix = prefix
-	}
-	if limit, ok := rawRequest["l"].(int); ok {
-		request.Limit = limit
-	} else if limitFloat, ok := rawRequest["l"].(float64); ok {
-		request.Limit = int(limitFloat)
-	}
-
-	log.Debugf("Received completion request: prefix='%s', limit=%d", request.Prefix, request.Limit)
-
-	// Validate prefix using config
-	if request.Prefix == "" {
-		return s.sendError(request.Id, "empty prefix", 400)
-	}
-	if len(request.Prefix) < s.config.Server.MinPrefix {
-		return s.sendError(request.Id, fmt.Sprintf("prefix too short (min: %d)", s.config.Server.MinPrefix), 400)
-	}
-	if len(request.Prefix) > s.config.Server.MaxPrefix {
-		return s.sendError(request.Id, fmt.Sprintf("prefix too long (max: %d)", s.config.Server.MaxPrefix), 400)
-	}
-
-	// Apply input filtering if enabled
-	if s.config.Server.EnableFilter && !utils.IsValidInput(request.Prefix) {
-		// Return empty suggestions for invalid input
-		return s.sendResponse(&CompletionResponse{
-			Id:          request.Id,
-			Suggestions: []CompletionSuggestion{},
-			Count:       0,
-			TimeTaken:   0,
-		})
-	}
-
-	// Apply limit using config
-	if request.Limit <= 0 {
-		request.Limit = s.config.Server.MaxLimit / 2 // reasonable default
-	}
-	if request.Limit > s.config.Server.MaxLimit {
-		request.Limit = s.config.Server.MaxLimit
-	}
-
-	// Get completions with timing
-	start := time.Now()
-	suggestions := s.completer.Complete(request.Prefix, request.Limit)
-	elapsed := time.Since(start)
-
-	// Convert to response format - eliminate rank generation if not needed
-	responseSuggestions := make([]CompletionSuggestion, len(suggestions))
-	for i, s := range suggestions {
-		responseSuggestions[i] = CompletionSuggestion{
-			Word: s.Word,
-			Rank: uint16(i + 1), // Simple rank instead of utils.GeneratePositionalRanks
-		}
-	}
-
-	response := &CompletionResponse{
-		Id:          request.Id,
-		Suggestions: responseSuggestions,
-		Count:       len(responseSuggestions),
-		TimeTaken:   elapsed.Microseconds(),
-	}
-
-	return s.sendResponse(response)
+	request := s.parseCompletionRequest(rawRequest)
+	return s.handleCompletionRequest(request)
 }
 
-// sendResponse encodes and sends MessagePack response to stdout atomically
+// sendResponse encodes and writes a MessagePack response atomically
 func (s *Server) sendResponse(response any) error {
 	s.writeMutex.Lock()
 	defer s.writeMutex.Unlock()
 
-	// Encode to buffer first to ensure atomic write
-	var buf bytes.Buffer
-	encoder := msgpack.NewEncoder(&buf)
-	if err := encoder.Encode(response); err != nil {
+	s.buffer.Reset()
+	if err := s.encoder.Encode(response); err != nil {
 		return fmt.Errorf("failed to encode response: %w", err)
 	}
 
-	// Write the complete msgpack data atomically
-	if _, err := os.Stdout.Write(buf.Bytes()); err != nil {
+	if _, err := os.Stdout.Write(s.buffer.Bytes()); err != nil {
 		return fmt.Errorf("failed to write response: %w", err)
 	}
 
-	// Ensure data is flushed immediately
 	os.Stdout.Sync()
-
 	return nil
 }
 
-// sendError sends MessagePack error response
+// sendError sends an error response with the given message and code
 func (s *Server) sendError(id string, message string, code int) error {
 	errorResponse := &CompletionError{
 		Id:    id,
@@ -235,7 +139,7 @@ func (s *Server) sendError(id string, message string, code int) error {
 	return s.sendResponse(errorResponse)
 }
 
-// processDictionaryRequest handles dictionary management requests
+// processDictionaryRequest handles dictionary management operations
 func (s *Server) processDictionaryRequest(rawRequest map[string]interface{}, action string) error {
 	log.Debugf("Processing dictionary request: action=%s", action)
 
@@ -252,12 +156,10 @@ func (s *Server) processDictionaryRequest(rawRequest map[string]interface{}, act
 			Error:  "Dictionary management not available",
 		})
 	}
-
-	log.Debugf("RuntimeLoader is available, processing action: %s", action)
-
 	switch action {
 	case "get_info":
-		currentChunks, availableChunks, err := s.runtimeLoader.GetCurrentDictionaryInfo()
+		stats := s.completer.Stats()
+		availableChunks, err := s.runtimeLoader.GetAvailableChunkCount()
 		if err != nil {
 			return s.sendResponse(&DictionaryResponse{
 				Id:     id,
@@ -268,7 +170,7 @@ func (s *Server) processDictionaryRequest(rawRequest map[string]interface{}, act
 		return s.sendResponse(&DictionaryResponse{
 			Id:              id,
 			Status:          "ok",
-			CurrentChunks:   currentChunks,
+			CurrentChunks:   stats["loadedChunks"],
 			AvailableChunks: availableChunks,
 		})
 
@@ -281,7 +183,6 @@ func (s *Server) processDictionaryRequest(rawRequest map[string]interface{}, act
 				Error:  err.Error(),
 			})
 		}
-		// Convert dictionary options to server options
 		serverOptions := make([]DictionarySizeOption, len(options))
 		for i, opt := range options {
 			serverOptions[i] = DictionarySizeOption{
@@ -306,29 +207,12 @@ func (s *Server) processDictionaryRequest(rawRequest map[string]interface{}, act
 			})
 		}
 
-		var count int
-		switch v := chunkCount.(type) {
-		case int:
-			count = v
-		case int64:
-			count = int(v)
-		case float64:
-			count = int(v)
-		case string:
-			if parsedCount, err := strconv.Atoi(v); err == nil {
-				count = parsedCount
-			} else {
-				return s.sendResponse(&DictionaryResponse{
-					Id:     id,
-					Status: "error",
-					Error:  "invalid chunk_count format",
-				})
-			}
-		default:
+		count, err := parseChunkCount(chunkCount)
+		if err != nil {
 			return s.sendResponse(&DictionaryResponse{
 				Id:     id,
 				Status: "error",
-				Error:  fmt.Sprintf("invalid chunk_count type: %T", v),
+				Error:  fmt.Sprintf("invalid chunk_count: %v", err),
 			})
 		}
 
@@ -346,16 +230,16 @@ func (s *Server) processDictionaryRequest(rawRequest map[string]interface{}, act
 		})
 
 	case "get_chunk_count":
-		_, availableChunks, err := s.runtimeLoader.GetCurrentDictionaryInfo()
+		availableChunks, err := s.runtimeLoader.GetAvailableChunkCount()
 		if err != nil {
-			return s.sendResponse(&ConfigResponse{
+			return s.sendResponse(&DictionaryResponse{
 				Id:     id,
 				Status: "error",
 				Error:  err.Error(),
 			})
 		}
 
-		return s.sendResponse(&ConfigResponse{
+		return s.sendResponse(&DictionaryResponse{
 			Id:              id,
 			Status:          "ok",
 			AvailableChunks: availableChunks,
@@ -368,4 +252,85 @@ func (s *Server) processDictionaryRequest(rawRequest map[string]interface{}, act
 			Error:  fmt.Sprintf("unknown action: %s", action),
 		})
 	}
+}
+
+// parseChunkCount converts interface{} values to integers for chunk counts
+func parseChunkCount(value interface{}) (int, error) {
+	switch v := value.(type) {
+	case int:
+		return v, nil
+	case int64:
+		return int(v), nil
+	case float64:
+		return int(v), nil
+	case string:
+		return strconv.Atoi(v)
+	default:
+		return 0, fmt.Errorf("unsupported type: %T", v)
+	}
+}
+
+// parseCompletionRequest extracts completion parameters from the raw request
+func (s *Server) parseCompletionRequest(rawRequest map[string]any) CompletionRequest {
+	var request CompletionRequest
+	if id, ok := rawRequest["id"].(string); ok {
+		request.Id = id
+	}
+	if prefix, ok := rawRequest["p"].(string); ok {
+		request.Prefix = prefix
+	}
+	if limit, ok := rawRequest["l"].(int); ok {
+		request.Limit = limit
+	} else if limitFloat, ok := rawRequest["l"].(float64); ok {
+		request.Limit = int(limitFloat)
+	}
+	return request
+}
+
+// handleCompletionRequest validates and processes a completion request
+func (s *Server) handleCompletionRequest(request CompletionRequest) error {
+	log.Debugf("Received completion request: prefix='%s', limit=%d", request.Prefix, request.Limit)
+	// Validate prefix using config
+	if request.Prefix == "" {
+		return s.sendError(request.Id, "empty prefix", 400)
+	}
+	if len(request.Prefix) < s.config.Server.MinPrefix {
+		return s.sendError(request.Id, fmt.Sprintf("prefix too short (min: %d)", s.config.Server.MinPrefix), 400)
+	}
+	if len(request.Prefix) > s.config.Server.MaxPrefix {
+		return s.sendError(request.Id, fmt.Sprintf("prefix too long (max: %d)", s.config.Server.MaxPrefix), 400)
+	}
+	if s.config.Server.EnableFilter && !utils.IsValidInput(request.Prefix) {
+		return s.sendResponse(&CompletionResponse{
+			Id:          request.Id,
+			Suggestions: []CompletionSuggestion{},
+			Count:       0,
+			TimeTaken:   0,
+		})
+	}
+	if request.Limit <= 0 {
+		request.Limit = s.config.Server.MaxLimit / 2
+	}
+	if request.Limit > s.config.Server.MaxLimit {
+		request.Limit = s.config.Server.MaxLimit
+	}
+	// Get completions with timing
+	start := time.Now()
+	suggestions := s.completer.Complete(request.Prefix, request.Limit)
+	elapsed := time.Since(start)
+
+	responseSuggestions := make([]CompletionSuggestion, len(suggestions))
+	for i, s := range suggestions {
+		responseSuggestions[i] = CompletionSuggestion{
+			Word: s.Word,
+			Rank: uint16(i + 1),
+		}
+	}
+	response := &CompletionResponse{
+		Id:          request.Id,
+		Suggestions: responseSuggestions,
+		Count:       len(responseSuggestions),
+		TimeTaken:   elapsed.Microseconds(),
+	}
+	return s.sendResponse(response)
 }
