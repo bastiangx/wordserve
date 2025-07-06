@@ -223,11 +223,12 @@ func main() {
 		logger.SetStyles(styles)
 
 		logger.Print("")
-		logger.Print("[ WordServe ] Serves really Fast word completions!")
+		logger.Print("[WordServe] Serves really Fast word completions!")
 		logger.Print("", "version", Version)
 		logger.Print("")
-		logger.Print("use -h or --help to see available options")
-		logger.Print("Github Repo", "gh", gh)
+		logger.Print("use --help to see available options")
+		logger.Print("")
+		logger.Print("Find out more at", "gh", gh)
 
 		os.Exit(0)
 	}
