@@ -1,9 +1,5 @@
 # ide
 .idea
 .vscode/
-
-# Golang
-*.sum
-
 # bin
 *.bin
