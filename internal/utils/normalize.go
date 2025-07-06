@@ -8,7 +8,7 @@ func CreateRankList(count int) []uint16 {
 		return []uint16{}
 	}
 	ranks := make([]uint16, count)
-	for i := 0; i < count; i++ {
+	for i := range count {
 		ranks[i] = uint16(i + 1)
 	}
 	return ranks

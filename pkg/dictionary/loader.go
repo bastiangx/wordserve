@@ -1,4 +1,45 @@
-// Package dictionary handles loading, managing and validating  _data_ bin files and their formats/headers.
+/*
+Package dictionary manages chunked binary dictionary files with lazy loading and runtime memory management.
+
+The dictionary package provides infrastructure for handling large word frequency datasets through a chunked file system. Words are stored in binary files with a specific format:
+>> Each chunk contains a header with word count followed by word entries with their frequency rankings. The package supports both validation of file formats and dynamic loading/unloading of chunks during runtime.
+
+Core functionality revolves around the Loader type, which manages concurrent access to multiple dictionary chunks. Each chunk file follows the naming pattern
+
+	dict_XXXX.bin
+	(dict_0001.bin, dict_0002.bin, etc)
+
+and contains a subset of the total dictionary. Enables applications to load only the most relevant words based on frequency ranking, and mem usage controlled.
+
+The binary format stores words with their rank values rather than raw frequencies. During init, words are ranked by frequency
+
+	(rank 1 = most freq)
+
+and stored as uint16 values.
+
+The loader converts these ranks back to frequency scores using the formula:
+
+	score = 65535 - rank + 1
+
+higher freq words receive higher scores for sorting.
+
+# Chunk
+
+The loader operates with a goroutine that processes loading requests from a buffered channel. Prevents blocking the main thread.
+Error handling includes automatic retry with exponential backoff for failed chunk loads.
+
+	loader := dictionary.NewLoader("data/", 50000)
+	err := loader.StartLoading()  // Begins loading
+	trie := loader.GetTrie()      // Access loaded data
+
+# Runtime
+
+RuntimeLoader provides dynamic control over loaded dictionary size during execution. Works with the base Loader to add or remove chunks based on target word counts or chunk counts.
+
+	runtimeLoader := dictionary.NewRuntimeLoader(loader)
+	err := runtimeLoader.SetDictionarySize(3)  // first 3 chunks
+	options, err := runtimeLoader.GetDictionarySizeOptions()
+*/
 package dictionary
 
 import (

@@ -8,7 +8,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/bastiangx/typr-lib/pkg/config"
+	"github.com/bastiangx/wordserve/pkg/config"
 	"github.com/charmbracelet/log"
 )
 

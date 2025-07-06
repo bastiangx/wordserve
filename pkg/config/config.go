@@ -1,4 +1,10 @@
-// Package config exposes libtyper's config structs.
+/*
+Package config manages TOML config for WordServe services.
+
+InitConfig handles automatic config file creation and loading with fallback to defaults.
+LoadConfig and SaveConfig provide direct fs for runtime changes.
+Update allows targeted parameter changes with persistence.
+*/
 package config
 
 import (
@@ -9,14 +15,14 @@ import (
 	"github.com/charmbracelet/log"
 )
 
-// Config holds the entire configuration structure for libtyper.
+// Config holds the entire config structure
 type Config struct {
 	Server ServerConfig `toml:"server"`
 	Dict   DictConfig   `toml:"dict"`
 	CLI    CliConfig    `toml:"cli"`
 }
 
-// ServerConfig holds server related configuration options.
+// ServerConfig has server related options.
 type ServerConfig struct {
 	MaxLimit     int  `toml:"max_limit"`
 	MinPrefix    int  `toml:"min_prefix"`
@@ -24,7 +30,7 @@ type ServerConfig struct {
 	EnableFilter bool `toml:"enable_filter"`
 }
 
-// DictConfig holds dictionary related configuration options.
+// DictConfig holds dictionary options.
 type DictConfig struct {
 	MaxWords               int `toml:"max_words"`
 	ChunkSize              int `toml:"chunk_size"`
@@ -33,7 +39,7 @@ type DictConfig struct {
 	MaxWordCountValidation int `toml:"max_word_count_validation"`
 }
 
-// CliConfig holds cli interface related configuration options.
+// CliConfig holds cli interface options.
 type CliConfig struct {
 	DefaultLimit    int  `toml:"default_limit"`
 	DefaultMinLen   int  `toml:"default_min_len"`
@@ -80,7 +86,6 @@ func InitConfig(configPath string) (*Config, error) {
 		log.Debugf("Created default config file at: ( %s )", configPath)
 		return config, nil
 	}
-
 	config, err := LoadConfig(configPath)
 	if err != nil {
 		log.Warnf("Failed to load config, using defaults: %v", err)
@@ -89,7 +94,7 @@ func InitConfig(configPath string) (*Config, error) {
 	return config, nil
 }
 
-// LoadConfig loads configuration from the TOML file
+// LoadConfig loads from a TOML file
 func LoadConfig(configPath string) (*Config, error) {
 	var config Config
 	if _, err := toml.DecodeFile(configPath, &config); err != nil {
@@ -99,7 +104,7 @@ func LoadConfig(configPath string) (*Config, error) {
 	return &config, nil
 }
 
-// SaveConfig saves configuration into TOML file
+// SaveConfig saves into a TOML file
 func SaveConfig(config *Config, configPath string) error {
 	file, err := os.Create(configPath)
 	if err != nil {
@@ -107,15 +112,13 @@ func SaveConfig(config *Config, configPath string) error {
 		return err
 	}
 	defer file.Close()
-
 	encoder := toml.NewEncoder(file)
 	return encoder.Encode(config)
 }
 
-// UpdateConfig updates config values and saves to file
+// Update changes the config values and saves to file
 func (c *Config) Update(configPath string, maxLimit, minPrefix, maxPrefix *int, enableFilter *bool) error {
 	server := &c.Server
-
 	if maxLimit != nil {
 		server.MaxLimit = *maxLimit
 	}

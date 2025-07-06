@@ -1,4 +1,4 @@
-// Package cli handles cmd line input and suggestions for dbg and testing various features
+// Package cli handles cmd line input and suggestions for DBG and testing various features
 package cli
 
 import (
@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/bastiangx/typr-lib/internal/utils"
-	completion "github.com/bastiangx/typr-lib/pkg/suggest"
+	"github.com/bastiangx/wordserve/internal/utils"
+	completion "github.com/bastiangx/wordserve/pkg/suggest"
 	"github.com/charmbracelet/log"
 )
 
@@ -41,7 +41,7 @@ func NewInputHandler(completer completion.ICompleter, minLength, maxLength, limi
 // and passes the trimmed input to the handleInput() for processing.
 // Loop terminates if an error occurs while reading from stdin
 func (h *InputHandler) Start() error {
-	log.Print("Typer CLI [BETA]")
+	log.Print("WordServe CLI [BETA]")
 	reader := bufio.NewReader(os.Stdin)
 	log.Print("type something and press Enter to see the suggestions (Ctrl+C to exit):")
 

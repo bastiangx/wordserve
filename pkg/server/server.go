@@ -1,4 +1,4 @@
-// Package server implements MessagePack IPC for completion and configuration management
+// Package server implements mspack IPC for completion and config for any clients
 package server
 
 import (
@@ -10,10 +10,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/bastiangx/typr-lib/internal/utils"
-	"github.com/bastiangx/typr-lib/pkg/config"
-	"github.com/bastiangx/typr-lib/pkg/dictionary"
-	completion "github.com/bastiangx/typr-lib/pkg/suggest"
+	"github.com/bastiangx/wordserve/internal/utils"
+	"github.com/bastiangx/wordserve/pkg/config"
+	"github.com/bastiangx/wordserve/pkg/dictionary"
+	completion "github.com/bastiangx/wordserve/pkg/suggest"
 	"github.com/charmbracelet/log"
 	"github.com/vmihailenco/msgpack/v5"
 )
@@ -132,7 +132,7 @@ func (s *Server) sendResponse(response any) error {
 // sendError sends an error response with the given message and code
 func (s *Server) sendError(id string, message string, code int) error {
 	errorResponse := &CompletionError{
-		Id:    id,
+		ID:    id,
 		Error: message,
 		Code:  code,
 	}
@@ -140,18 +140,18 @@ func (s *Server) sendError(id string, message string, code int) error {
 }
 
 // processDictionaryRequest handles dictionary management operations
-func (s *Server) processDictionaryRequest(rawRequest map[string]interface{}, action string) error {
+func (s *Server) processDictionaryRequest(rawRequest map[string]any, action string) error {
 	log.Debugf("Processing dictionary request: action=%s", action)
 
 	var id string
-	if rawId, ok := rawRequest["id"]; ok {
-		id = rawId.(string)
+	if rawID, ok := rawRequest["id"]; ok {
+		id = rawID.(string)
 	}
 
 	if s.runtimeLoader == nil {
 		log.Debug("Dictionary management not available - runtimeLoader is nil")
 		return s.sendResponse(&DictionaryResponse{
-			Id:     id,
+			ID:     id,
 			Status: "error",
 			Error:  "Dictionary management not available",
 		})
@@ -162,13 +162,13 @@ func (s *Server) processDictionaryRequest(rawRequest map[string]interface{}, act
 		availableChunks, err := s.runtimeLoader.GetAvailableChunkCount()
 		if err != nil {
 			return s.sendResponse(&DictionaryResponse{
-				Id:     id,
+				ID:     id,
 				Status: "error",
 				Error:  err.Error(),
 			})
 		}
 		return s.sendResponse(&DictionaryResponse{
-			Id:              id,
+			ID:              id,
 			Status:          "ok",
 			CurrentChunks:   stats["loadedChunks"],
 			AvailableChunks: availableChunks,
@@ -178,7 +178,7 @@ func (s *Server) processDictionaryRequest(rawRequest map[string]interface{}, act
 		options, err := s.runtimeLoader.GetDictionarySizeOptions()
 		if err != nil {
 			return s.sendResponse(&DictionaryResponse{
-				Id:     id,
+				ID:     id,
 				Status: "error",
 				Error:  err.Error(),
 			})
@@ -192,7 +192,7 @@ func (s *Server) processDictionaryRequest(rawRequest map[string]interface{}, act
 			}
 		}
 		return s.sendResponse(&DictionaryResponse{
-			Id:      id,
+			ID:      id,
 			Status:  "ok",
 			Options: serverOptions,
 		})
@@ -201,7 +201,7 @@ func (s *Server) processDictionaryRequest(rawRequest map[string]interface{}, act
 		chunkCount, exists := rawRequest["chunk_count"]
 		if !exists {
 			return s.sendResponse(&DictionaryResponse{
-				Id:     id,
+				ID:     id,
 				Status: "error",
 				Error:  "chunk_count required for set_size action",
 			})
@@ -210,7 +210,7 @@ func (s *Server) processDictionaryRequest(rawRequest map[string]interface{}, act
 		count, err := parseChunkCount(chunkCount)
 		if err != nil {
 			return s.sendResponse(&DictionaryResponse{
-				Id:     id,
+				ID:     id,
 				Status: "error",
 				Error:  fmt.Sprintf("invalid chunk_count: %v", err),
 			})
@@ -218,14 +218,14 @@ func (s *Server) processDictionaryRequest(rawRequest map[string]interface{}, act
 
 		if err := s.runtimeLoader.SetDictionarySize(count); err != nil {
 			return s.sendResponse(&DictionaryResponse{
-				Id:     id,
+				ID:     id,
 				Status: "error",
 				Error:  err.Error(),
 			})
 		}
 
 		return s.sendResponse(&DictionaryResponse{
-			Id:     id,
+			ID:     id,
 			Status: "ok",
 		})
 
@@ -233,21 +233,21 @@ func (s *Server) processDictionaryRequest(rawRequest map[string]interface{}, act
 		availableChunks, err := s.runtimeLoader.GetAvailableChunkCount()
 		if err != nil {
 			return s.sendResponse(&DictionaryResponse{
-				Id:     id,
+				ID:     id,
 				Status: "error",
 				Error:  err.Error(),
 			})
 		}
 
 		return s.sendResponse(&DictionaryResponse{
-			Id:              id,
+			ID:              id,
 			Status:          "ok",
 			AvailableChunks: availableChunks,
 		})
 
 	default:
 		return s.sendResponse(&DictionaryResponse{
-			Id:     id,
+			ID:     id,
 			Status: "error",
 			Error:  fmt.Sprintf("unknown action: %s", action),
 		})
@@ -255,7 +255,7 @@ func (s *Server) processDictionaryRequest(rawRequest map[string]interface{}, act
 }
 
 // parseChunkCount converts interface{} values to integers for chunk counts
-func parseChunkCount(value interface{}) (int, error) {
+func parseChunkCount(value any) (int, error) {
 	switch v := value.(type) {
 	case int:
 		return v, nil
@@ -274,7 +274,7 @@ func parseChunkCount(value interface{}) (int, error) {
 func (s *Server) parseCompletionRequest(rawRequest map[string]any) CompletionRequest {
 	var request CompletionRequest
 	if id, ok := rawRequest["id"].(string); ok {
-		request.Id = id
+		request.ID = id
 	}
 	if prefix, ok := rawRequest["p"].(string); ok {
 		request.Prefix = prefix
@@ -292,17 +292,17 @@ func (s *Server) handleCompletionRequest(request CompletionRequest) error {
 	log.Debugf("Received completion request: prefix='%s', limit=%d", request.Prefix, request.Limit)
 	// Validate prefix using config
 	if request.Prefix == "" {
-		return s.sendError(request.Id, "empty prefix", 400)
+		return s.sendError(request.ID, "empty prefix", 400)
 	}
 	if len(request.Prefix) < s.config.Server.MinPrefix {
-		return s.sendError(request.Id, fmt.Sprintf("prefix too short (min: %d)", s.config.Server.MinPrefix), 400)
+		return s.sendError(request.ID, fmt.Sprintf("prefix too short (min: %d)", s.config.Server.MinPrefix), 400)
 	}
 	if len(request.Prefix) > s.config.Server.MaxPrefix {
-		return s.sendError(request.Id, fmt.Sprintf("prefix too long (max: %d)", s.config.Server.MaxPrefix), 400)
+		return s.sendError(request.ID, fmt.Sprintf("prefix too long (max: %d)", s.config.Server.MaxPrefix), 400)
 	}
 	if s.config.Server.EnableFilter && !utils.IsValidInput(request.Prefix) {
 		return s.sendResponse(&CompletionResponse{
-			Id:          request.Id,
+			ID:          request.ID,
 			Suggestions: []CompletionSuggestion{},
 			Count:       0,
 			TimeTaken:   0,
@@ -327,7 +327,7 @@ func (s *Server) handleCompletionRequest(request CompletionRequest) error {
 		}
 	}
 	response := &CompletionResponse{
-		Id:          request.Id,
+		ID:          request.ID,
 		Suggestions: responseSuggestions,
 		Count:       len(responseSuggestions),
 		TimeTaken:   elapsed.Microseconds(),

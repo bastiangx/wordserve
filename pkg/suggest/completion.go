@@ -4,9 +4,9 @@ import (
 	"runtime"
 	"sort"
 
-	"github.com/bastiangx/typr-lib/internal/utils"
-	"github.com/bastiangx/typr-lib/pkg/config"
-	"github.com/bastiangx/typr-lib/pkg/dictionary"
+	"github.com/bastiangx/wordserve/internal/utils"
+	"github.com/bastiangx/wordserve/pkg/config"
+	"github.com/bastiangx/wordserve/pkg/dictionary"
 
 	"github.com/tchap/go-patricia/v2/patricia"
 )
