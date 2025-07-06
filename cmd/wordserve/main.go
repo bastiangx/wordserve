@@ -158,7 +158,6 @@ import (
 	"syscall"
 
 	"github.com/bastiangx/wordserve/internal/cli"
-	"github.com/bastiangx/wordserve/internal/utils"
 	"github.com/bastiangx/wordserve/pkg/config"
 	"github.com/bastiangx/wordserve/pkg/server"
 	completion "github.com/bastiangx/wordserve/pkg/suggest"
@@ -190,8 +189,8 @@ func main() {
 	sigHandler()
 	defaultConfig := config.DefaultConfig()
 
-	// custom Flags
 	showVersion := flag.Bool("version", false, "Show current version")
+	configFile := flag.String("config", "", "Path to custom config.toml file")
 	binaryDir := flag.String("data", "data/", "Directory containing the binary files")
 	debugMode := flag.Bool("d", false, "Toggle debug mode")
 	cliMode := flag.Bool("c", false, "Run CLI -- useful for testing and debugging")
@@ -233,15 +232,6 @@ func main() {
 		os.Exit(0)
 	}
 
-	// Initialize path resolver for robust path handling
-	pathResolver, err := utils.NewPathResolver()
-	if err != nil {
-		log.Fatalf("Failed to initialize path resolver: %v", err)
-		log.Print("Either env is not set or system is not supported")
-		log.Print("Did you forget to run the build or install scripts?")
-		os.Exit(1)
-	}
-
 	if *debugMode {
 		log.SetLevel(log.DebugLevel)
 		log.SetReportTimestamp(true)
@@ -249,12 +239,7 @@ func main() {
 		log.SetLevel(log.WarnLevel)
 	}
 
-	// Pathfinder for bin dir
-	resolvedDataDir, err := pathResolver.GetDataDir(*binaryDir)
-	if err != nil {
-		log.Fatalf("Failed to resolve data dir:(%v)", err)
-		os.Exit(1)
-	}
+	resolvedDataDir := *binaryDir
 
 	log.Debugf("Using data dir at: %s", resolvedDataDir)
 	log.Debugf("Init completer: maxWords=[%d], chunkSize=[%d]", *wordLimit, *chunkSize)
@@ -292,18 +277,13 @@ func main() {
 	}
 
 	log.Debug("spawning IPC")
-	configPath, err := pathResolver.GetConfigPath("typer-config.toml")
-	if err != nil {
-		log.Fatalf("Failed to determine config path: (%v)", err)
-		os.Exit(1)
-	}
-	log.Debugf("Using config file: (%s)", configPath)
 
-	appConfig, err := config.InitConfig(configPath)
+	appConfig, configPath, err := config.LoadConfigWithPriority(*configFile)
 	if err != nil {
 		log.Fatalf("Failed to load config: %v", err)
 		os.Exit(1)
 	}
+	log.Debugf("Using config file: %s", configPath)
 	srv := server.NewServer(completer, appConfig, configPath)
 
 	showStartupInfo(resolvedDataDir)

@@ -93,12 +93,18 @@ type DictionaryResponse struct {
 	Options         []DictionarySizeOption `msgpack:"options,omitempty"`
 }
 
+// ConfigRequest - config management request
+type ConfigRequest struct {
+	ID     string `msgpack:"id"`
+	Action string `msgpack:"action"` // "rebuild_config", "get_config_path"
+}
+
 // ConfigResponse - config operation response
 type ConfigResponse struct {
-	ID              string `msgpack:"id"`
-	Status          string `msgpack:"status"`
-	Error           string `msgpack:"error,omitempty"`
-	AvailableChunks int    `msgpack:"available_chunks,omitempty"`
+	ID         string `msgpack:"id"`
+	Status     string `msgpack:"status"`
+	Error      string `msgpack:"error,omitempty"`
+	ConfigPath string `msgpack:"config_path,omitempty"`
 }
 
 // CompletionError holds basic error information for completion requests

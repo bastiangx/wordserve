@@ -97,7 +97,13 @@ func (s *Server) processCompletionRequest() error {
 	}
 
 	if action, exists := rawRequest["action"]; exists {
-		return s.processDictionaryRequest(rawRequest, action.(string))
+		actionStr := action.(string)
+		// Check if it's a config management action
+		if actionStr == "rebuild_config" || actionStr == "get_config_path" {
+			return s.processConfigRequest(rawRequest, actionStr)
+		}
+		// Otherwise, it's a dictionary request
+		return s.processDictionaryRequest(rawRequest, actionStr)
 	}
 
 	if _, hasDictSize := rawRequest["dictionary_size"]; hasDictSize {
@@ -137,6 +143,46 @@ func (s *Server) sendError(id string, message string, code int) error {
 		Code:  code,
 	}
 	return s.sendResponse(errorResponse)
+}
+
+// processConfigRequest handles configuration management operations
+func (s *Server) processConfigRequest(rawRequest map[string]any, action string) error {
+	log.Debugf("Processing config request: action=%s", action)
+
+	var id string
+	if rawID, ok := rawRequest["id"]; ok {
+		id = rawID.(string)
+	}
+
+	switch action {
+	case "rebuild_config":
+		if err := config.RebuildConfigFile(); err != nil {
+			return s.sendResponse(&ConfigResponse{
+				ID:     id,
+				Status: "error",
+				Error:  fmt.Sprintf("Failed to rebuild config file: %v", err),
+			})
+		}
+		return s.sendResponse(&ConfigResponse{
+			ID:     id,
+			Status: "ok",
+		})
+
+	case "get_config_path":
+		configPath := config.GetActiveConfigPath(s.configPath)
+		return s.sendResponse(&ConfigResponse{
+			ID:         id,
+			Status:     "ok",
+			ConfigPath: configPath,
+		})
+
+	default:
+		return s.sendResponse(&ConfigResponse{
+			ID:     id,
+			Status: "error",
+			Error:  fmt.Sprintf("unknown config action: %s", action),
+		})
+	}
 }
 
 // processDictionaryRequest handles dictionary management operations
