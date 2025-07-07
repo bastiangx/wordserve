@@ -10,6 +10,7 @@ import (
 
 	"github.com/bastiangx/wordserve/pkg/config"
 	"github.com/charmbracelet/log"
+	"github.com/bastiangx/wordserve/internal/utils"
 )
 
 // FileFormat shows file format types for dictionaries
@@ -46,6 +47,11 @@ var supportedFormats = map[FileFormat]FormatInfo{
 
 // ValidateFileFormat checks if a file matches our expected format
 func ValidateFileFormat(filename string, expectedFormat FileFormat) error {
+	if !utils.FileExists(filename) {
+		log.Errorf("file does not exist: %s", filename)
+		return errors.New("file does not exist")
+	}
+
 	fileInfo, err := os.Stat(filename)
 	if err != nil {
 		log.Errorf("failed to stat file %s: %v", filename, err)

@@ -7,8 +7,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/BurntSushi/toml"
 	"github.com/charmbracelet/log"
+	"github.com/bastiangx/wordserve/internal/utils"
 )
 
 // Config holds the entire config structure
@@ -43,13 +43,36 @@ type CliConfig struct {
 	DefaultNoFilter bool `toml:"default_no_filter"`
 }
 
-// GetConfigDir returns the confif directory (std golang)
+// GetConfigDir returns the config directory with fallback priority:
+// 1. ~/.config/
+// 2. ~/Library/Application Support/ (macOS)
+// 3. Current executable dir
+// 4. builtin defaults
 func GetConfigDir() (string, error) {
-	userConfigDir, err := os.UserConfigDir()
+	homeDir, err := os.UserHomeDir()
 	if err != nil {
+		log.Errorf("Failed to get home directory: %v", err)
+		execDir, execErr := utils.GetExecutableDir()
+		if execErr != nil {
+			return "", execErr
+		}
+		return execDir, nil
+	}
+	primaryPath := filepath.Join(homeDir, ".config", "wordserve")
+	if result := utils.CheckDirStatus(primaryPath); result.Writable {
+		return primaryPath, nil
+	}
+	// Not conventional, fallback from ~/.config if not writable
+	macOSPath := filepath.Join(homeDir, "Library", "Application Support", "wordserve")
+	if result := utils.CheckDirStatus(macOSPath); result.Writable {
+		return macOSPath, nil
+	}
+	execDir, err := utils.GetExecutableDir()
+	if err != nil {
+		log.Errorf("Failed to get executable directory: %v", err)
 		return "", err
 	}
-	return filepath.Join(userConfigDir, "wordserve"), nil
+	return execDir, nil
 }
 
 // GetDefaultConfigPath returns the default path for config.toml
@@ -126,12 +149,12 @@ func DefaultConfig() *Config {
 func InitConfig(configPath string) (*Config, error) {
 	configDir := filepath.Dir(configPath)
 
-	if err := os.MkdirAll(configDir, 0755); err != nil {
+	if err := utils.EnsureDir(configDir); err != nil {
 		log.Warnf("Failed to create config directory %s: %v. Using built-in defaults...", configDir, err)
 		return DefaultConfig(), nil
 	}
-	if _, err := os.Stat(configPath); os.IsNotExist(err) {
-		// Create default config file
+
+	if !utils.FileExists(configPath) {
 		config := DefaultConfig()
 		if err := SaveConfig(config, configPath); err != nil {
 			log.Warnf("Failed to create default config file at %s: %v. Using built-in defaults...", configPath, err)
@@ -140,6 +163,7 @@ func InitConfig(configPath string) (*Config, error) {
 		log.Debugf("Created default config file at: %s", configPath)
 		return config, nil
 	}
+
 	config, err := LoadConfig(configPath)
 	if err != nil {
 		log.Warnf("Failed to load config from %s: %v. Using built-in defaults...", configPath, err)
@@ -152,8 +176,7 @@ func InitConfig(configPath string) (*Config, error) {
 func LoadConfig(configPath string) (*Config, error) {
 	config := DefaultConfig()
 
-	if _, err := toml.DecodeFile(configPath, config); err != nil {
-		log.Warnf("TOML parsing error in config file %s: %v. Attempting partial recovery...", configPath, err)
+	if err := utils.LoadTOMLFile(configPath, config); err != nil {
 		return tryPartialParse(configPath)
 	}
 	return config, nil
@@ -162,25 +185,20 @@ func LoadConfig(configPath string) (*Config, error) {
 // tryPartialParse attempts to parse a TOML file
 func tryPartialParse(configPath string) (*Config, error) {
 	config := DefaultConfig()
-	// section by section
-	data, err := os.ReadFile(configPath)
-	if err != nil {
-		return nil, err
-	}
 
-	// Create a temp config to try parsing into
-	tempConfig := make(map[string]any)
-	if _, err := toml.Decode(string(data), &tempConfig); err != nil {
+	tempConfig, err := utils.ParseTOMLWithRecovery(configPath)
+	if err != nil {
 		log.Warnf("Could not parse any valid configuration from %s: %v. Using all defaults.", configPath, err)
 		return config, nil
 	}
-	if serverSection, ok := tempConfig["server"].(map[string]any); ok {
+
+	if serverSection, ok := utils.ExtractSection(tempConfig, "server"); ok {
 		extractServerConfig(serverSection, &config.Server)
 	}
-	if dictSection, ok := tempConfig["dict"].(map[string]any); ok {
+	if dictSection, ok := utils.ExtractSection(tempConfig, "dict"); ok {
 		extractDictConfig(dictSection, &config.Dict)
 	}
-	if cliSection, ok := tempConfig["cli"].(map[string]any); ok {
+	if cliSection, ok := utils.ExtractSection(tempConfig, "cli"); ok {
 		extractCliConfig(cliSection, &config.CLI)
 	}
 	return config, nil
@@ -188,51 +206,51 @@ func tryPartialParse(configPath string) (*Config, error) {
 
 // extractServerConfig extracts server configuration from a map
 func extractServerConfig(data map[string]any, server *ServerConfig) {
-	if val, ok := data["max_limit"].(int64); ok {
-		server.MaxLimit = int(val)
+	if val, ok := utils.ExtractInt64(data, "max_limit"); ok {
+		server.MaxLimit = val
 	}
-	if val, ok := data["min_prefix"].(int64); ok {
-		server.MinPrefix = int(val)
+	if val, ok := utils.ExtractInt64(data, "min_prefix"); ok {
+		server.MinPrefix = val
 	}
-	if val, ok := data["max_prefix"].(int64); ok {
-		server.MaxPrefix = int(val)
+	if val, ok := utils.ExtractInt64(data, "max_prefix"); ok {
+		server.MaxPrefix = val
 	}
-	if val, ok := data["enable_filter"].(bool); ok {
+	if val, ok := utils.ExtractBool(data, "enable_filter"); ok {
 		server.EnableFilter = val
 	}
 }
 
 // extractDictConfig extracts dictionary configuration from a map
 func extractDictConfig(data map[string]any, dict *DictConfig) {
-	if val, ok := data["max_words"].(int64); ok {
-		dict.MaxWords = int(val)
+	if val, ok := utils.ExtractInt64(data, "max_words"); ok {
+		dict.MaxWords = val
 	}
-	if val, ok := data["chunk_size"].(int64); ok {
-		dict.ChunkSize = int(val)
+	if val, ok := utils.ExtractInt64(data, "chunk_size"); ok {
+		dict.ChunkSize = val
 	}
-	if val, ok := data["min_frequency_threshold"].(int64); ok {
-		dict.MinFreqThreshold = int(val)
+	if val, ok := utils.ExtractInt64(data, "min_frequency_threshold"); ok {
+		dict.MinFreqThreshold = val
 	}
-	if val, ok := data["min_frequency_short_prefix"].(int64); ok {
-		dict.MinFreqShortPrefix = int(val)
+	if val, ok := utils.ExtractInt64(data, "min_frequency_short_prefix"); ok {
+		dict.MinFreqShortPrefix = val
 	}
-	if val, ok := data["max_word_count_validation"].(int64); ok {
-		dict.MaxWordCountValidation = int(val)
+	if val, ok := utils.ExtractInt64(data, "max_word_count_validation"); ok {
+		dict.MaxWordCountValidation = val
 	}
 }
 
 // extractCliConfig extracts CLI config from a map
 func extractCliConfig(data map[string]any, cli *CliConfig) {
-	if val, ok := data["default_limit"].(int64); ok {
-		cli.DefaultLimit = int(val)
+	if val, ok := utils.ExtractInt64(data, "default_limit"); ok {
+		cli.DefaultLimit = val
 	}
-	if val, ok := data["default_min_len"].(int64); ok {
-		cli.DefaultMinLen = int(val)
+	if val, ok := utils.ExtractInt64(data, "default_min_len"); ok {
+		cli.DefaultMinLen = val
 	}
-	if val, ok := data["default_max_len"].(int64); ok {
-		cli.DefaultMaxLen = int(val)
+	if val, ok := utils.ExtractInt64(data, "default_max_len"); ok {
+		cli.DefaultMaxLen = val
 	}
-	if val, ok := data["default_no_filter"].(bool); ok {
+	if val, ok := utils.ExtractBool(data, "default_no_filter"); ok {
 		cli.DefaultNoFilter = val
 	}
 }
@@ -244,11 +262,11 @@ func RebuildConfigFile() error {
 		return err
 	}
 	configDir := filepath.Dir(defaultPath)
-	if err := os.MkdirAll(configDir, 0755); err != nil {
+	if err := utils.EnsureDir(configDir); err != nil {
 		return err
 	}
 	config := DefaultConfig()
-	return SaveConfig(config, defaultPath)
+	return utils.SaveTOMLFile(config, defaultPath)
 }
 
 // GetActiveConfigPath returns the absolute path of loaded config file
@@ -259,26 +277,12 @@ func GetActiveConfigPath(configPath string) string {
 		}
 		return "unknown"
 	}
-
-	// Convert if relative
-	if !filepath.IsAbs(configPath) {
-		if absPath, err := filepath.Abs(configPath); err == nil {
-			return absPath
-		}
-	}
-	return configPath
+	return utils.GetAbsolutePath(configPath)
 }
 
 // SaveConfig saves into a TOML file
 func SaveConfig(config *Config, configPath string) error {
-	file, err := os.Create(configPath)
-	if err != nil {
-		log.Errorf("Failed to create config file: %v", err)
-		return err
-	}
-	defer file.Close()
-	encoder := toml.NewEncoder(file)
-	return encoder.Encode(config)
+	return utils.SaveTOMLFile(config, configPath)
 }
 
 // Update changes the config values and saves to file
