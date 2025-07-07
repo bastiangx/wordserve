@@ -7,8 +7,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/charmbracelet/log"
 	"github.com/bastiangx/wordserve/internal/utils"
+	"github.com/charmbracelet/log"
 )
 
 // Config holds the entire config structure
