@@ -3,150 +3,35 @@
 // license that can be found in the LICENSE file.
 
 /*
-Package main implements word completion server and CLI [DBG] application.
+Package main implements the WordServe server and commandline interface.
 
-Note: This is a BETA release. APIs and functionality may rapidly change.
-
-WordServe provides fast prefix-based word completion using Patricia tries with
-frequency ranking. It can operate as a MessagePack IPC server for integration
-with text editors, or as a CLI application for testing and debugging.
-
-The server mode uses lazy-loaded chunked dictionaries to efficiently handle
-large word datasets while maintaining low memory usage. Words are ranked by
-frequency and filtered based on configurable thresholds to provide relevant
-suggestions.
-
-# Usage
-
-Start the server with default settings:
-
-	wserve
-
-Use custom data directory and enable debug mode:
-
-	wserve -data /path/to/chunks -d
-
-Run in CLI mode for interactive testing:
-
-	wserve -c -limit 10 -prmin 2
-
-The data directory should contain chunked binary files named dict_0001.bin,
-dict_0002.bin, etc. These files are generated from word frequency data and
-loaded on-demand based on the configured limits.
-
-# Configuration
-
-Runtime configuration is managed through a TOML file that supports server
-parameters, dictionary settings, and CLI defaults:
-
-	[server]
-	max_limit = 64
-	min_prefix = 1
-	max_prefix = 60
-	enable_filter = true
-
-	[dict]
-	max_words = 50000
-	chunk_size = 10000
-	min_frequency_threshold = 20
-
-The config file is automatically created with defaults if it doesn't exist.
-Server mode reloads configuration periodically without restart.
-
-# IPC Protocol
-
-The server communicates via MessagePack over stdin/stdout. Completion requests
-are processed synchronously with microsecond timing information included in
-responses.
-
-Send a completion request:
-
-	{"id": "req1", "p": "hello", "l": 20}
-
-Receive suggestions with frequency ranking:
-
-	{"id": "req1", "s": [{"w": "hello", "r": 1}, {"w": "help", "r": 2}], "c": 2, "t": 145}
-
-Dictionary management requests allow runtime adjustment of loaded chunks:
-
-	{"id": "dict1", "action": "get_info"}
-	{"id": "dict2", "action": "set_size", "chunk_count": 5}
+WordServe has prefix based word completion using a radix trie data structure
+with frequency ranking. It can operate as a MessagePack IPC server
+for editor/generic client integrations or as a standalone CLI for interactive testing.
 
 # Server Mode
 
-The default mode starts a MessagePack IPC server that processes completion
-requests from stdin and writes responses to stdout. This design enables
-integration with text editors and other applications through process
-communication.
-
-	server := server.NewServer(completer, config, configPath)
-	err := server.Start()
-
-The server automatically handles request parsing, validation, and response
-formatting. It includes built-in rate limiting, configuration reloading,
-and memory management features for long-running sessions.
+The server uses lazy, chunked dictionaries to manage large word
+datasets with low memory overhead. Words are ranked by frequency and filtered
+using configurable thresholds to deliver relevant suggestions.
 
 # CLI Mode
 
-CLI mode provides an interactive interface for testing and debugging
-completion functionality. It reads prefixes from stdin and displays
-suggestions with frequency information.
+The CLI provides an interactive shell for debugging and testing the completion
+engine's functionality.
 
-	inputHandler := cli.NewInputHandler(completer, minLen, maxLen, limit, noFilter)
-	err := inputHandler.Start()
+# Data Files
 
-This mode is primarily intended for development and testing new features
-before deploying to server mode. It supports the same filtering and
-threshold logic as the server but with human-readable output.
+The data directory must contain dictionary files named `dict_0001.bin`,
+`dict_0002.bin`, etc., along with a `words.txt` file. If these files are
+missing, the application will attempt to generate them locally or download them
+from the project's GitHub releases page.
 
-# Completion Engine
+# Config
 
-The core completion functionality is provided by the suggest package,
-which implements Patricia trie-based prefix matching with frequency ranking.
-
-	completer := suggest.NewLazyCompleter(dataDir, chunkSize, maxWords)
-	err := completer.Initialize()
-	suggestions := completer.Complete("prefix", 20)
-
-The completer supports both static word addition and lazy loading from
-chunked binary files. Memory pools are used extensively to reduce garbage
-collection pressure during high-frequency operations.
-
-# Command Line Flags
-
-The following flags control application behavior:
-
-	-data string
-	    Directory containing binary chunk files (default "data/")
-	-d  Enable debug mode with detailed logging
-	-c  Run in CLI mode instead of server mode
-	-limit int
-	    Number of suggestions to return (default from config)
-	-prmin int
-	    Minimum prefix length for suggestions
-	-prmax int
-	    Maximum prefix length for suggestions
-	-no-filter
-	    Disable input filtering for debugging
-	-words int
-	    Maximum words to load (0 for all)
-	-chunk int
-	    Words per chunk for lazy loading
-
-The application automatically resolves data and config paths relative to the
-executable location, supporting both development and production deployments.
-
-# Mem
-
-The lazy loader manages memory usage by loading dictionary chunks on demand
-and providing cleanup mechanisms. The server periodically triggers garbage
-collection and reloads configuration to maintain optimal performance during
-long-running sessions.
-
-Input filtering removes non-alphabetic prefixes by default to improve
-suggestion relevance, though this can be disabled for debugging purposes.
-Frequency thresholds are automatically adjusted based on prefix length to
-balance result quality and quantity.
+Runtime configuration is managed via a `config.toml` file, which supports
+settings for the server, dictionary, and CLI. A default configuration is
+created automatically if one does not exist.
 */
 package main
 
