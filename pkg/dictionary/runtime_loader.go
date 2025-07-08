@@ -48,18 +48,20 @@ func (rl *RuntimeLoader) GetMaxWordsAvailable() (int, error) {
 }
 
 // SetDictionarySize updates the dictionary to load the specified number of chunks
-// chunks should be between 1 and the maximum available chunks
+// Automatically generates required chunks if not enough are available
 func (rl *RuntimeLoader) SetDictionarySize(targetChunks int) error {
 	if targetChunks < 1 {
 		return fmt.Errorf("minimum dictionary size is 1 chunk")
 	}
 
-	chunks, err := rl.chunkLoader.GetAvailable()
-	if err != nil {
-		return fmt.Errorf("failed to get available chunks: %w", err)
-	}
-	if targetChunks > len(chunks) {
-		return fmt.Errorf("requested %d chunks but only %d are available", targetChunks, len(chunks))
+	// Check if we have enough chunks
+	if !rl.chunkLoader.checkDictNum(targetChunks) {
+		log.Infof("Insufficient chunks available. Generating missing chunks for a total of %d.", targetChunks)
+		if err := rl.chunkLoader.checkChunkCount(targetChunks); err != nil {
+			return fmt.Errorf("failed to generate required chunks: %w", err)
+		}
+	} else {
+		log.Debugf("Sufficient chunks available for %d requirements.", targetChunks)
 	}
 
 	currentStats := rl.chunkLoader.GetStats()

@@ -29,15 +29,16 @@ The loader operates with a goroutine that processes loading requests from a buff
 Error handling includes automatic retry with exponential backoff for failed chunk loads.
 
 	loader := dictionary.NewLoader("data/", 50000)
-	err := loader.StartLoading()  // Begins loading
-	trie := loader.GetTrie()      // Access loaded data
+	err := loader.StartLoading()
+	trie := loader.GetTrie()
 
 # Runtime
 
-RuntimeLoader provides dynamic control over loaded dictionary size during execution. Works with the base Loader to add or remove chunks based on target word counts or chunk counts.
+RuntimeLoader gives control over loaded dictionary size during execution.
+Works with the base Loader to add or remove chunks based on target word counts or chunk counts.
 
 	runtimeLoader := dictionary.NewRuntimeLoader(loader)
-	err := runtimeLoader.SetDictionarySize(3)  // first 3 chunks
+	err := runtimeLoader.SetDictionarySize(3)
 	options, err := runtimeLoader.GetDictionarySizeOptions()
 */
 package dictionary
@@ -49,7 +50,9 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -57,8 +60,17 @@ import (
 	"sync"
 	"time"
 
+	"github.com/bastiangx/wordserve/internal/utils"
+	"github.com/bastiangx/wordserve/pkg/config"
 	"github.com/charmbracelet/log"
 	"github.com/tchap/go-patricia/v2/patricia"
+)
+
+const (
+	// GHReleaseURL is the placeholder URL for downloading pre-built dictionary files
+	GHReleaseURL = "https://github.com/bastiangx/wordserve/releases/latest/download"
+	// MaxRetries for luajit script execution
+	MaxRetries = 3
 )
 
 // Loader manages lazy loading of dictionary chunks
@@ -126,6 +138,10 @@ func (cl *Loader) GetAvailable() ([]ChunkInfo, error) {
 
 	if cl.chunksCached {
 		return cl.availableChunks, nil
+	}
+
+	if err := cl.checkDictFiles(); err != nil {
+		return nil, err
 	}
 
 	pattern := filepath.Join(cl.dirPath, "dict_*.bin")
@@ -464,4 +480,248 @@ func (cl *Loader) GetLoadedIDs() []int {
 	}
 	sort.Ints(loadedIDs)
 	return loadedIDs
+}
+
+// checkDictFiles checks if enough dictionary files exist, creates them if not
+func (cl *Loader) checkDictFiles() error {
+	if err := cl.checkWordFile(); err != nil {
+		return err
+	}
+	if cl.checkDictNum() {
+		return nil
+	}
+	log.Info("not enough dictionary files found, attempting to generate them...")
+	if err := cl.buildLocalDict(); err != nil {
+		log.Warnf("Local generation failed: %v", err)
+		if err := cl.dlReleaseDict(); err != nil {
+			log.Errorf("Remote download failed: %v", err)
+			cl.logInitError()
+			return err
+		}
+	}
+	return nil
+}
+
+// checkWordFile checks for the existence of words.txt and downloads it if needed
+func (cl *Loader) checkWordFile() error {
+	wordsPath := filepath.Join(cl.dirPath, "words.txt")
+	if _, err := os.Stat(wordsPath); os.IsNotExist(err) {
+		log.Info("words.txt not found, attempting to download...")
+		url := GHReleaseURL + "/words.txt"
+		if err := cl.dlFile(url, wordsPath); err != nil {
+			log.Errorf("Failed to download words.txt: %v", err)
+			return fmt.Errorf("failed to download words.txt: %w", err)
+		}
+		log.Infof("Successfully downloaded words.txt")
+	}
+	return nil
+}
+
+// findScriptPath attempts to locate the build-data.lua
+func (cl *Loader) findScriptPath() (string, error) {
+	possiblePaths := []string{
+		filepath.Join("scripts", "build-data.lua"),
+		filepath.Join("..", "scripts", "build-data.lua"),
+	}
+	if execDir, err := utils.GetExecutableDir(); err == nil {
+		projectRoot := filepath.Dir(execDir)
+		if filepath.Base(execDir) == "cmd" || filepath.Base(execDir) == "bin" {
+			projectRoot = filepath.Dir(execDir)
+		}
+		possiblePaths = append(possiblePaths, []string{
+			filepath.Join(execDir, "scripts", "build-data.lua"),
+			filepath.Join(projectRoot, "scripts", "build-data.lua"),
+			filepath.Join(filepath.Dir(projectRoot), "scripts", "build-data.lua"),
+		}...)
+	}
+	for _, path := range possiblePaths {
+		if _, err := os.Stat(path); err == nil {
+			log.Debugf("Found script at: %s", path)
+			return path, nil
+		}
+	}
+	return "", fmt.Errorf("build-data.lua not found in any of the expected locations: %v", possiblePaths)
+}
+
+// checkDictNum checks if the needed number of .bin files exist
+// If requiredChunks is 0, uses config
+func (cl *Loader) checkDictNum(requiredChunks ...int) bool {
+	neededChunks := 0
+	if len(requiredChunks) > 0 && requiredChunks[0] > 0 {
+		neededChunks = requiredChunks[0]
+	} else {
+		cfg, _, err := config.LoadConfigWithPriority("")
+		if err != nil {
+			log.Warnf("Failed to load config, using defaults: %v", err)
+			cfg = config.DefaultConfig()
+		}
+		neededChunks = cl.computeChunkAmount(cfg)
+	}
+
+	pattern := filepath.Join(cl.dirPath, "dict_*.bin")
+	existingFiles, err := filepath.Glob(pattern)
+	if err != nil {
+		log.Errorf("Failed to check existing files: %v", err)
+		return false
+	}
+	log.Debugf("Found %d existing files, need %d chunks", len(existingFiles), neededChunks)
+	return len(existingFiles) >= neededChunks
+}
+
+// computeChunkAmount determines how many bin files are needed based on config
+func (cl *Loader) computeChunkAmount(cfg *config.Config) int {
+	if cfg.Dict.ChunkSize <= 0 || cfg.Dict.MaxWords <= 0 {
+		return 1
+	}
+	return (cfg.Dict.MaxWords + cfg.Dict.ChunkSize - 1) / cfg.Dict.ChunkSize
+}
+
+// buildLocalDict attempts to run the luajit script to generate dictionary files
+func (cl *Loader) buildLocalDict() error {
+	return cl.buildLocalDictWithConfig(nil)
+}
+
+// buildLocalDictWithConfig attempts to run the luajit script with specific config
+func (cl *Loader) buildLocalDictWithConfig(cfg *config.Config) error {
+	if _, err := exec.LookPath("luajit"); err != nil {
+		return errors.New("luajit not found in PATH")
+	}
+	if cfg == nil {
+		var err error
+		cfg, _, err = config.LoadConfigWithPriority("")
+		if err != nil {
+			log.Warnf("Failed to load config, using defaults: %v", err)
+			cfg = config.DefaultConfig()
+		}
+	}
+	scriptPath, err := cl.findScriptPath()
+	if err != nil {
+		return fmt.Errorf("luajit script not found: %w", err)
+	}
+	maxChunks := cl.computeChunkAmount(cfg)
+	args := []string{
+		scriptPath,
+		"--chunk-size", fmt.Sprintf("%d", cfg.Dict.ChunkSize),
+		"--max-chunks", fmt.Sprintf("%d", maxChunks),
+	}
+	for attempt := 1; attempt <= MaxRetries; attempt++ {
+		log.Infof("Running luajit script (attempt %d/%d)...", attempt, MaxRetries)
+		cmd := exec.Command("luajit", args...)
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+
+		if err := cmd.Run(); err != nil {
+			log.Errorf("Luajit script failed (attempt %d): %v", attempt, err)
+			if attempt < MaxRetries {
+				time.Sleep(time.Duration(attempt) * time.Second)
+				continue
+			}
+			return fmt.Errorf("luajit script failed after %d attempts: %w", MaxRetries, err)
+		}
+		log.Info("Dictionary files generated successfully")
+		return nil
+	}
+	return errors.New("should not reach here")
+}
+
+// dlReleaseDict downloads dict files from GitHub release
+func (cl *Loader) dlReleaseDict() error {
+	return cl.dlReleaseDictWithConfig(nil)
+}
+
+// dlReleaseDictWithConfig downloads dict files with specific config
+func (cl *Loader) dlReleaseDictWithConfig(cfg *config.Config) error {
+	log.Info("Attempting to download pre-built dictionary files...")
+
+	if cfg == nil {
+		var err error
+		cfg, _, err = config.LoadConfigWithPriority("")
+		if err != nil {
+			log.Warnf("Failed to load config, using defaults: %v", err)
+			cfg = config.DefaultConfig()
+		}
+	}
+	requiredChunks := cl.computeChunkAmount(cfg)
+
+	for i := 1; i <= requiredChunks; i++ {
+		filename := fmt.Sprintf("dict_%04d.bin", i)
+		url := fmt.Sprintf("%s/%s", GHReleaseURL, filename)
+		localPath := filepath.Join(cl.dirPath, filename)
+
+		if err := cl.dlFile(url, localPath); err != nil {
+			return fmt.Errorf("failed to download %s: %w", filename, err)
+		}
+		log.Debugf("Downloaded %s", filename)
+	}
+	log.Info("Successfully downloaded all dictionary files")
+	return nil
+}
+
+// dlFile downloads a file from a URL to a local path
+func (cl *Loader) dlFile(url, localPath string) error {
+	resp, err := http.Get(url)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, resp.Status)
+	}
+	file, err := os.Create(localPath)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	_, err = io.Copy(file, resp.Body)
+	return err
+}
+
+// checkChunkCount checks if the needed number of chunks exists
+func (cl *Loader) checkChunkCount(rc int) error {
+	if cl.checkDictNum(rc) {
+		return nil
+	}
+	cfg, _, err := config.LoadConfigWithPriority("")
+	if err != nil {
+		log.Warnf("Failed to load config, using defaults: %v", err)
+		cfg = config.DefaultConfig()
+	}
+
+	originalMaxWords := cfg.Dict.MaxWords
+	cfg.Dict.MaxWords = rc * cfg.Dict.ChunkSize
+
+	if err := cl.buildLocalDictWithConfig(cfg); err != nil {
+		log.Warnf("Local generation failed: %v", err)
+		if err := cl.dlReleaseDictWithConfig(cfg); err != nil {
+			log.Errorf("Remote download failed: %v", err)
+			cl.logInitError()
+			return err
+		}
+	}
+	cfg.Dict.MaxWords = originalMaxWords
+	cl.mu.Lock()
+	cl.chunksCached = false
+	cl.availableChunks = nil
+	cl.mu.Unlock()
+
+	return nil
+}
+
+// logInitError logs a fatal with user guide
+func (cl *Loader) logInitError() {
+	log.Fatal(`
+Failed to initialize dictionary files!
+WordServe could not create or download the required data files.
+
+To resolve this issue, you can:
+
+1. Run the LuaJIT script manually:
+   cd scripts && luajit build-data.lua --chunk-size 10000
+
+2. Download pre-built files from:
+   ` + GHReleaseURL + `
+
+then place the downloaded .bin files in the 'data' directory.`)
 }
