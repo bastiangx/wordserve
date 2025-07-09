@@ -51,7 +51,7 @@ import (
 )
 
 const (
-	Version = "0.9.0-beta"
+	Version = "0.1.0-beta"
 	AppName = "wordserve"
 	gh      = "https://github.com/bastiangx/wordserve"
 )
@@ -77,7 +77,7 @@ func main() {
 	showVersion := flag.Bool("version", false, "Show current version")
 	configFile := flag.String("config", "", "Path to custom config.toml file")
 	binaryDir := flag.String("data", "data/", "Directory containing the binary files")
-	debugMode := flag.Bool("d", false, "Toggle debug mode")
+	debugMode := flag.Bool("v", false, "Toggle verbose mode")
 	cliMode := flag.Bool("c", false, "Run CLI -- useful for testing and debugging")
 	limit := flag.Int("limit", defaultConfig.CLI.DefaultLimit, "Number of suggestions to return")
 	minPrefix := flag.Int("prmin", defaultConfig.CLI.DefaultMinLen, "Minimum prefix length for suggestions (1 < n <= prmax)")
