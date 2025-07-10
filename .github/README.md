@@ -10,14 +10,16 @@ Lightweight prefix completion library | server, designed for any MessagePack cli
   <br />
   <br />
 
-<div align="center">
-<img src="https://files.catbox.moe/vj4tms.gif" alt="MessagePack">
-</div>
+<picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://files.catbox.moe/vj4tms.gif">
+    <source media="(prefers-color-scheme: light)" srcset="https://files.catbox.moe/vj4tms.gif">
+    <img src="https://files.catbox.moe/vj4tms.gif" alt="Example usage of wordserve suggestions in a client app" />
+</picture>
 
 <br />
-  <a href="https://github.com/dec0dOS/amazing-github-template/issues/new?assignees=&labels=bug&template=01_BUG_REPORT.md&title=bug%3A+">Report a Bug</a>
+  <a href="">Report a Bug</a>
   ·
-  <a href="https://github.com/dec0dOS/amazing-github-template/issues/new?assignees=&labels=enhancement&template=02_FEATURE_REQUEST.md&title=feat%3A+">Request a Feature</a>
+  <a href="">Request a Feature</a>
 </div>
 
 <br>
