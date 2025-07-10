@@ -11,7 +11,7 @@ Lightweight prefix completion library | server, designed for any MessagePack cli
   <br />
 
 <div align="center">
-<video src="https://files.catbox.moe/eat4zl.webm" width="500" controls autoplay muted loop>
+<video src="https://files.catbox.moe/eat4zl.webm" controls autoplay muted loop>
   Your browser does not support the video tag.
 </video>
 </div>
