@@ -15,8 +15,8 @@ Lightweight prefix completion library | server, designed for any MessagePack cli
 
 <div align="center">
     <picture>
-      <source srcset="https://files.catbox.moe/vj4tms.gif" />
-      <img src="https://files.catbox.moe/vj4tms.gif" alt="Example usage of wordserve suggestions engine in a client app" />
+      <source srcset="https://files.catbox.moe/d136t3.gif" />
+      <img src="https://files.catbox.moe/d136t3.gif" alt="Example usage of wordserve suggestions engine in a client app" />
     </picture>
 </div>
 
