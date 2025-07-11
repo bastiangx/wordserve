@@ -119,6 +119,8 @@ luajit scripts/build-dict.lua
     </picture>
 
 <br />
+<br />
+
 WordServe returns suggestions in batches using a radix trie. Memory pools handle rapid queries without triggering garbage collection.
 
 <br />
@@ -133,6 +135,8 @@ WordServe returns suggestions in batches using a radix trie. Memory pools handle
     </picture>
 
 <br />
+<br />
+
 The IPC server communicates through stdin/stdout channels with minimal protocol overhead.
 
 Goroutines handle multiple client connections simultaneously.
@@ -145,6 +149,8 @@ Goroutines handle multiple client connections simultaneously.
 <img src="https://files.catbox.moe/69eg4f.gif" alt="a gif video showing wordserve suggestions engine handling capital letters properly">
 
 <br />
+<br />
+
 It just works
 
 <br />
@@ -158,6 +164,7 @@ It just works
       <img src="https://files.catbox.moe/7kwkwk.png"/>
     </picture>
 
+<br />
 <br />
 
 Binary MessagePack encoding keeps request and response payloads as small as possible.
@@ -174,6 +181,8 @@ Binary MessagePack encoding keeps request and response payloads as small as poss
     </picture>
 
 <br />
+<br />
+
 Start with a simple `words.txt` file containing 65,000+ entries.
 
 WordServe chunks the dictionary into binary trie files and loads only what's needed, dynamically managing memory based on usage patterns.
@@ -186,6 +195,8 @@ WordServe chunks the dictionary into binary trie files and loads only what's nee
 <img src="https://files.catbox.moe/nv7r2x.gif" alt="Memory usage of WordServe shown to be around 20MB with 50K words loaded in">
 
 <br />
+<br />
+
 WordServe's memory usage remains low even with large dictionaries, typically around 20MB for 50,000 words default.
 Even after expanding many nodes and normal usage for few hours, it stays under 60MB and has checks to shrink periodically.
 
@@ -279,4 +290,3 @@ See [LICENSE](LICENSE)
 
 - The _Beautiful_ [Rosepine theme](https://rosepinetheme.com/) used for graphics and screenshots throughout the readme.
 - The Incredible mono font, Berkeley Mono by [U.S. Graphics](https://usgraphics.com/products/berkeley-mono) used in screenshots, graphics, gifs and more.
-
