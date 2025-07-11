@@ -21,9 +21,9 @@ Lightweight prefix completion library | server, designed for any MessagePack cli
 </div>
 
 <br />
-  <a href="">Report a Bug</a>
+  <a href="https://github.com/bastiangx/wordserve/issues/new?assignees=&labels=bug&template=BUG-REPORT.yml&title=%5BBug%5D%3A+">Report a Bug</a>
   ·
-  <a href="">Request a Feature</a>
+  <a href="https://github.com/bastiangx/wordserve/issues/new?assignees=&labels=enhancement&template=FEATURE-REQUEST.yml&title=%5BFeature%5D%3A+">Request a Feature</a>
 </div>
 
 #### What's it about?
