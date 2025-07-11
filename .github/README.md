@@ -157,7 +157,7 @@ It just works
 ### Compact MessagePack Protocol
 
  <picture>
-      <source media="(prefers-color-scheme: light)" srcset="https://files.catbox.moe/91x2w5.png">
+      <source media="(prefers-color-scheme: light)" srcset="https://files.catbox.moe/vlkcqa.png">
       <source media="(prefers-color-scheme: dark)" srcset="https://files.catbox.moe/7kwkwk.png">
       <img src="https://files.catbox.moe/7kwkwk.png"/>
     </picture>
@@ -171,7 +171,7 @@ Binary MessagePack encoding keeps request and response payloads as small as poss
 ### Many Many Words
 
  <picture>
-      <source media="(prefers-color-scheme: light)" srcset="https://files.catbox.moe/ngsi4q.png">
+      <source media="(prefers-color-scheme: light)" srcset="https://files.catbox.moe/z463kh.png">
       <source media="(prefers-color-scheme: dark)" srcset="https://files.catbox.moe/w4cn0v.png">
       <img src="https://files.catbox.moe/w4cn0v.png"/>
     </picture>
