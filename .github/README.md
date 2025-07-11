@@ -226,6 +226,27 @@ Read all about using them in the [API doc](./docs/api.md)
 
 More comprehensive and verbose [Go Package docs](https://pkg.go.dev/github.com/bastiangx/wordserve/pkg/suggest)
 
+```go
+completer := suggest.NewLazyCompleter("./data", 10000, 50000)
+
+if err := completer.Initialize(); err != nil {
+    log.Fatalf("Failed to initialize: %v", err)
+}
+
+suggestions := completer.Complete("amer", 10)
+```
+
+or for static check:
+
+```go
+completer := suggest.NewCompleter()
+
+completer.AddWord("example", 500)
+completer.AddWord("excellent", 400)
+
+suggestions := completer.Complete("ex", 5)
+```
+
 > You can inspect the _informal_ flow diagram on the core internals:
 
 <a href="https://files.catbox.moe/6wy79k.png">
@@ -235,6 +256,49 @@ More comprehensive and verbose [Go Package docs](https://pkg.go.dev/github.com/b
 ### Client Integration
 
 The [Client Integration](./docs/client.md) gives some guide on how to use WordServe in your TS/JS app.
+
+```ts
+import { spawn, ChildProcess } from 'child_process';
+import { encode, decode } from '@msgpack/msgpack';
+
+class WordServeClient {
+  private process: ChildProcess;
+  private requestId = 0;
+
+  constructor(binaryPath: string = 'wordserve') {
+    this.process = spawn(binaryPath, [], {
+      stdio: ['pipe', 'pipe', 'pipe']
+    });
+  }
+
+  async getCompletions(prefix: string, limit: number = 20): Promise<Suggestion[]> {
+    const request = {
+      id: `req_${++this.requestId}`,
+      p: prefix,
+      l: limit      // (optional)
+    };
+
+    const binaryRequest = encode(request);
+    this.process.stdin!.write(binaryRequest);
+
+    return new Promise((resolve, reject) => {
+      this.process.stdout!.once('data', (data: Buffer) => {
+        try {
+          const response = decode(data) as CompletionResponse;
+          const suggestions = response.s.map((s, index) => ({
+            word: s.w,
+            rank: s.r,
+            frequency: 65536 - s.r // Convert rank back to freq score
+          }));
+          resolve(suggestions);
+        } catch (error) {
+          reject(error);
+        }
+      });
+    });
+  }
+}
+```
 
 ### CLI
 
