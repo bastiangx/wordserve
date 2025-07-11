@@ -119,11 +119,9 @@ luajit scripts/build-dict.lua
     </picture>
 
 <br />
-<br />
 
 WordServe returns suggestions in batches using a radix trie. Memory pools handle rapid queries without triggering garbage collection.
 
-<br />
 <br />
 
 ### Responsive
@@ -135,13 +133,11 @@ WordServe returns suggestions in batches using a radix trie. Memory pools handle
     </picture>
 
 <br />
-<br />
 
 The IPC server communicates through stdin/stdout channels with minimal protocol overhead.
 
 Goroutines handle multiple client connections simultaneously.
 
-<br />
 <br />
 
 ### Capital letters
@@ -149,12 +145,8 @@ Goroutines handle multiple client connections simultaneously.
 <img src="https://files.catbox.moe/69eg4f.gif" alt="a gif video showing wordserve suggestions engine handling capital letters properly">
 
 <br />
-<br />
 
 It just works
-
-<br />
-<br />
 
 ### Compact MessagePack Protocol
 
@@ -165,11 +157,9 @@ It just works
     </picture>
 
 <br />
-<br />
 
 Binary MessagePack encoding keeps request and response payloads as small as possible.
 
-<br />
 <br />
 
 ### Many Many Words
@@ -181,20 +171,17 @@ Binary MessagePack encoding keeps request and response payloads as small as poss
     </picture>
 
 <br />
-<br />
 
 Start with a simple `words.txt` file containing 65,000+ entries.
 
 WordServe chunks the dictionary into binary trie files and loads only what's needed, dynamically managing memory based on usage patterns.
 
 <br />
-<br />
 
 ### Small memory usage
 
 <img src="https://files.catbox.moe/nv7r2x.gif" alt="Memory usage of WordServe shown to be around 20MB with 50K words loaded in">
 
-<br />
 <br />
 
 WordServe's memory usage remains low even with large dictionaries, typically around 20MB for 50,000 words default.
