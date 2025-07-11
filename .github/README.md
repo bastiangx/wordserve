@@ -14,7 +14,10 @@ Lightweight prefix completion library | server, designed for any MessagePack cli
   <br />
 
 <div align="center">
-    <img src="https://files.catbox.moe/vj4tms.gif" alt="Example usage of wordserve suggestions engine in a client app" />
+    <picture>
+      <source srcset="https://files.catbox.moe/vj4tms.gif" />
+      <img src="https://files.catbox.moe/vj4tms.gif" alt="Example usage of wordserve suggestions engine in a client app" />
+    </picture>
 </div>
 
 <br />
@@ -142,7 +145,10 @@ Goroutines handle multiple client connections simultaneously.
 
 ### Capital letters
 
-<img src="https://files.catbox.moe/69eg4f.gif" alt="a gif video showing wordserve suggestions engine handling capital letters properly">
+<picture>
+      <source srcset="https://files.catbox.moe/69eg4f.gif" />
+      <img src="https://files.catbox.moe/69eg4f.gif" alt="a gif video showing wordserve suggestions engine handling capital letters properly" />
+    </picture>
 
 <br />
 
@@ -180,7 +186,10 @@ WordServe chunks the dictionary into binary trie files and loads only what's nee
 
 ### Small memory usage
 
-<img src="https://files.catbox.moe/nv7r2x.gif" alt="Memory usage of WordServe shown to be around 20MB with 50K words loaded in">
+<picture>
+      <source srcset="https://files.catbox.moe/nv7r2x.gif" />
+      <img src="https://files.catbox.moe/nv7r2x.gif" alt="Memory usage of WordServe shown to be around 20MB with 50K words loaded in" />
+    </picture>
 
 <br />
 
@@ -242,7 +251,7 @@ suggestions := completer.Complete("ex", 5)
 
 ### Client Integration
 
-The [Client Integration](./docs/client.md) gives some guide on how to use WordServe in your TS/JS app.
+The [Client doc](./docs/client.md) gives some guide on how to use WordServe in your TS/JS app.
 
 ```ts
 import { spawn, ChildProcess } from 'child_process';
@@ -291,7 +300,10 @@ class WordServeClient {
 
 Learn how to use it in the [CLI doc](./docs/cli.md)
 
-<img src="https://files.catbox.moe/aoa2s1.gif" alt="WordServe CLI in action">
+<picture>
+      <source srcset="https://files.catbox.moe/aoa2s1.gif" />
+      <img src="https://files.catbox.moe/aoa2s1.gif" alt="WordServe CLI in action" />
+    </picture>
 
 ##### Flags
 
