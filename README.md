@@ -218,7 +218,7 @@ A simple CLI is also provided for testing and debugging.
 
 The library provides simple to use API for prefix completion requests and dictionary management.
 
-Read all about using them in the [API doc](./docs/api.md)
+Read all about using them in the [API doc](docs/api.md)
 
 More comprehensive and verbose [Go Package docs](https://pkg.go.dev/github.com/bastiangx/wordserve/pkg/suggest)
 
@@ -251,7 +251,7 @@ suggestions := completer.Complete("ex", 5)
 
 ### Client Integration
 
-The [Client doc](./docs/client.md) gives some guide on how to use WordServe in your TS/JS app.
+The [Client doc](docs/client.md) gives some guide on how to use WordServe in your TS/JS app.
 
 ```ts
 import { spawn, ChildProcess } from 'child_process';
@@ -298,7 +298,7 @@ class WordServeClient {
 
 ### CLI
 
-Learn how to use it in the [CLI doc](./docs/cli.md)
+Learn how to use it in the [CLI doc](docs/cli.md)
 
 <picture>
       <source srcset="https://files.catbox.moe/aoa2s1.gif" />
@@ -327,17 +327,17 @@ wordserve [flags]
 
 ## Dictionary
 
-Read more about the [dictionary design](./docs/dictionary.md) and how it works.
+Read more about the [dictionary design](docs/dictionary.md) and how it works.
 
 ## Configuration
 
-Refer to the [config doc](./docs/config.md) on how to manage server, send commands to it and change dictionary on runtime.
+Refer to the [config doc](docs/config.md) on how to manage server, send commands to it and change dictionary on runtime.
 
 ## Development
 
 See the [open issues](https://github.com/bastiangx/wordserve/issues) for a list of proposed features (and known issues).
 
-Contributions are welcome! Refer to the [contributing guidelines](./CONTRIBUTING.md)
+Contributions are welcome! Refer to the [contributing guidelines](.github/CONTRIBUTING.md)
 
 ## License
 
