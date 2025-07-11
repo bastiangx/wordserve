@@ -1,20 +1,21 @@
-
 <h1 align="center">
   <a href="https://github.com/bastiangx/wordserve">
-    <img src="https://files.catbox.moe/hy2y82.png" alt="WordServe Logo and banner">
+ <picture>
+      <source media="(prefers-color-scheme: light)" srcset="https://files.catbox.moe/sa5maz.png">
+      <source media="(prefers-color-scheme: dark)" srcset="https://files.catbox.moe/hy2y82.png">
+      <img src="https://files.catbox.moe/hy2y82.png"/>
+    </picture>
   </a>
 </h1>
 
 <div align="center">
-Lightweight prefix completion library | server, designed for any MessagePack clients!
+Lightweight prefix completion library | server, designed for any MessagePack clients
   <br />
   <br />
 
-<picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://files.catbox.moe/vj4tms.gif">
-    <source media="(prefers-color-scheme: light)" srcset="https://files.catbox.moe/vj4tms.gif">
-    <img src="https://files.catbox.moe/vj4tms.gif" alt="Example usage of wordserve suggestions in a client app" />
-</picture>
+<div align="center">
+    <img src="https://files.catbox.moe/vj4tms.gif" alt="Example usage of wordserve suggestions engine in a client app" />
+</div>
 
 <br />
   <a href="">Report a Bug</a>
@@ -22,9 +23,7 @@ Lightweight prefix completion library | server, designed for any MessagePack cli
   <a href="">Request a Feature</a>
 </div>
 
-<br>
-
-#### What is this?
+#### What's it about?
 
 <table>
 <tr>
@@ -59,34 +58,17 @@ Think of this as a elementary nvim-cmp or vscode Intellisense daemon, but for an
 
 ## Installation
 
-### Releases
+### Go
 
-Download the latest precompiled binaries from the [releases page](https://github.com/bastiangx/wordserve/releases/latest).
-
-> pay attention to the OS and architecture of the binary you are downloading.
-
-> If you'not not sure, use 'go install' from instructions below.
-
-### Building from source
-
-- using `go install` _(Recommended)_:
+using `go install` _(Recommended)_:
 
 ```sh
 go install github.com/bastiangx/wordserve/cmd/wordserve@latest
 ```
 
-You can also clone via git and build the old fashioned way:
+#### Library Dependency
 
-```sh
-git clone https://github.com/bastiangx/wordserve.git
-cd wordserve
-# -w -s strips debug info & symbols | alias wserve
-go build -ldflags="-w -s" -o wserve ./cmd/wordserve/main.go
-```
-
-### Go
-
-- use `go get` to add `wordserve` as a dependency in your project:
+use `go get` to add `wordserve` as a dependency in your project:
 
 ```sh
 go get github.com/bastiangx/wordserve
@@ -98,75 +80,165 @@ and then import it in your code:
 import "github.com/bastiangx/wordserve/pkg/suggest"
 ```
 
+### Releases
+
+ Download the latest precompiled binaries from the [releases page](https://github.com/bastiangx/wordserve/releases/latest).
+
+- `wordserve` should automatically build and initialize the needed `.bin` dictionary files via fetching the `words.txt` from this repo.
+- If that doesn't work, you can also download the prebuilt `.bin` files from the [releases page](https://github.com/bastiangx/wordserve/releases/latest) and place them in the `data/` directory where `wordserve` is located.
+
+> If you'not not sure, use 'go install'.
+
+### Building from source
+
+You can also clone via git and build the old fashioned way:
+
+```sh
+git clone https://github.com/bastiangx/wordserve.git
+cd wordserve
+# -w -s strips debug info & symbols | alias wserve
+go build -ldflags="-w -s" -o wserve ./cmd/wordserve/main.go
+```
+
+The build process for the dict files is handled by the `wordserve` binary, If you encounter any issues, you can manually run the build script located in `scripts/build-dict.lua` using [LuaJIT](https://luajit.org/).
+
+> Make sure the `data/` directory exists and has the `words.txt` file in it before running this.
+
+```sh
+luajit scripts/build-dict.lua
+```
+
 ## What can it do?
 
 ### Batched Word Suggestions
 
-<img src="https://files.catbox.moe/h26n6q.png" alt="WordServe's average processing time is shown to be average around 150 milliseconds"  width="500">
+ <picture>
+      <source media="(prefers-color-scheme: light)" srcset="https://files.catbox.moe/sd3ikj.png">
+      <source media="(prefers-color-scheme: dark)" srcset="https://files.catbox.moe/h26n6q.png">
+      <img src="https://files.catbox.moe/h26n6q.png"/>
+    </picture>
 
-### Responsive Server
+<br />
+WordServe returns suggestions in batches using a radix trie. Memory pools handle rapid queries without triggering garbage collection.
 
-<img src="https://files.catbox.moe/jbnp25.png" alt="IPC Server" width="500">
+<br />
+<br />
 
-### MessagePack Integration
+### Responsive
 
-<img src="https://files.catbox.moe/7kwkwk.png" alt="MessagePack" height="300">
+ <picture>
+      <source media="(prefers-color-scheme: light)" srcset="https://files.catbox.moe/ca82mt.png">
+      <source media="(prefers-color-scheme: dark)" srcset="https://files.catbox.moe/8emcdr.png">
+      <img src="https://files.catbox.moe/8emcdr.png"/>
+    </picture>
 
-###
+<br />
+The IPC server communicates through stdin/stdout channels with minimal protocol overhead.
 
-<img src="https://files.catbox.moe/14hvay.png" alt="Radix Trie Traversal" height="300">
+Goroutines handle multiple client connections simultaneously.
 
-### Limitless Suggestions
+<br />
+<br />
+
+### Capital letters
+
+<img src="https://files.catbox.moe/69eg4f.gif" alt="a gif video showing wordserve suggestions engine handling capital letters properly">
+
+<br />
+It just works
+
+<br />
+<br />
+
+### Compact MessagePack Protocol
+
+ <picture>
+      <source media="(prefers-color-scheme: light)" srcset="https://files.catbox.moe/91x2w5.png">
+      <source media="(prefers-color-scheme: dark)" srcset="https://files.catbox.moe/7kwkwk.png">
+      <img src="https://files.catbox.moe/7kwkwk.png"/>
+    </picture>
+
+<br />
+
+Binary MessagePack encoding keeps request and response payloads as small as possible.
+
+<br />
+<br />
+
+### Many Many Words
+
+ <picture>
+      <source media="(prefers-color-scheme: light)" srcset="https://files.catbox.moe/ngsi4q.png">
+      <source media="(prefers-color-scheme: dark)" srcset="https://files.catbox.moe/w4cn0v.png">
+      <img src="https://files.catbox.moe/w4cn0v.png"/>
+    </picture>
+
+<br />
+Start with a simple `words.txt` file containing 65,000+ entries.
+
+WordServe chunks the dictionary into binary trie files and loads only what's needed, dynamically managing memory based on usage patterns.
+
+<br />
+<br />
+
+### Small memory usage
+
+<img src="https://files.catbox.moe/nv7r2x.gif" alt="Memory usage of WordServe shown to be around 20MB with 50K words loaded in">
+
+<br />
+WordServe's memory usage remains low even with large dictionaries, typically around 20MB for 50,000 words default.
+Even after expanding many nodes and normal usage for few hours, it stays under 60MB and has checks to shrink periodically.
 
 ## What can it _not_ do?
 
-As this is the early version and Beta, there are _many_ features that are yet not implemented, such as:
+As this is the early version and Beta, there are _many_ features that are yet not implemented
 
-- fuzzy matching
+- simple fuzzy matching
 - string searching algo (haystack-needle)
-- spelling correction (aspell)
-- use conventional dict formats like `.dict`
+- integrated spelling correction (aspell)
+- support conventional dict formats like `.dict`
 
-Will monitor the issues and usage to see if enough people are interested in adding them.
+Will monitor the issues and usage to see if enough people are interested.
 
 ## Usage
 
 ### Standalone server
 
-you can run `wordserve` as a dependency in your Go project, a standalone IPC server, and as a CLI in terminal to test its dictionary.
+you can run `wordserve` as a dependency in your Go project, a standalone IPC server.
+A simple CLI is also provided for testing and debugging.
 
-### Library API
+### Library
 
-Please follow these steps for manual setup:
+The library provides simple to use API for prefix completion requests and dictionary management.
 
-1. [Download the precompiled template](https://github.com/dec0dOS/amazing-github-template/releases/download/latest/template.zip)
-2. Replace all the [variables](#variables-reference) to your desired values
-3. Initialize the repo in the precompiled template folder
+Read all about using them in the [API doc](./docs/api.md)
 
-    `or`
+More comprehensive and verbose [Go Package docs](https://pkg.go.dev/github.com/bastiangx/wordserve/pkg/suggest)
 
-    Move the necessary files from precompiled template folder to your existing project directory. Don't forget the `.github` directory that may be hidden by default in your operating system
+> You can inspect the _informal_ flow diagram on the core internals:
+
+<a href="https://files.catbox.moe/6wy79k.png">
+<img src="https://files.catbox.moe/6wy79k.png" alt="A flow diagram of WordServe's core internals">
+</a>
 
 ### Client Integration
 
-You can inspect the _informal_ flow diagram on the internals of WordServe and how it returns suggestions to the client:
-
-<a href="https://files.catbox.moe/6wy79k.png">
-<img src="https://files.catbox.moe/6wy79k.png" alt="Flow Diagram" width="500">
-</a>
+The [Client Integration](./docs/client.md) gives some guide on how to use WordServe in your TS/JS app.
 
 ### CLI
 
-##### Flags
+Learn how to use it in the [CLI doc](./docs/cli.md)
 
-in terminal, run:
+<img src="https://files.catbox.moe/aoa2s1.gif" alt="WordServe CLI in action">
+
+##### Flags
 
 ```sh
 wordserve [flags]
 ```
 
 | Flag       | Description                                                                                   | Default Value |
-|:---------- |:--------------------------------------------------------------------------------------------- |:-------------:|
+| :--------- | :-------------------------------------------------------------------------------------------- | :-----------: |
 | -version   | Show current version                                                                          |     false     |
 | -config    | Path to custom config.toml file                                                               |      ""       |
 | -data      | Directory containing the binary files                                                         |    "data/"    |
@@ -176,20 +248,16 @@ wordserve [flags]
 | -prmin     | Minimum Prefix length for suggestions (1 < n <= prmax)                                        |       3       |
 | -prmax     | Maximum Prefix length for suggestions                                                         |      24       |
 | -no-filter | Disable input filtering (DBG only) - shows all raw dictionary entries (numbers, symbols, etc) |     false     |
-| -words     | Maximum number of words to load (use 0 for all words)                                         |    100,000     |
-| -chunk     | Number of words per chunk for lazy loading                                                    |     10,000     |
+| -words     | Maximum number of words to load (use 0 for all words)                                         |    100,000    |
+| -chunk     | Number of words per chunk for lazy loading                                                    |    10,000     |
 
 ## Dictionary
 
-todo
+Read more about the [dictionary design](./docs/dictionary.md) and how it works.
 
 ## Configuration
 
-todo
-
-#### Server Config
-
-todo
+Refer to the [config doc](./docs/config.md) on how to manage server, send commands to it and change dictionary on runtime.
 
 ## Development
 
@@ -210,3 +278,5 @@ See [LICENSE](LICENSE)
   - <span style="color: #908caa;">  Its a great extension to use on browsers, but I wanted something that can be used basically in any electron/local webapps with plugin clients, but also make it wayyy faster and more efficient since the depeendencies used there are way too bloated (C++ ...) and had too many bindings for my liking, and also more imporatantly, make this a good practice for me to learn how radix tries work for prefixes.</span>
 
 - The _Beautiful_ [Rosepine theme](https://rosepinetheme.com/) used for graphics and screenshots throughout the readme.
+- The Incredible mono font, Berkeley Mono by [U.S. Graphics](https://usgraphics.com/products/berkeley-mono) used in screenshots, graphics, gifs and more.
+
