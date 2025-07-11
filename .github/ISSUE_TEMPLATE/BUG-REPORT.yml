@@ -1,33 +1,57 @@
----
 name: Bug Report
-about: Create a report to help WordServe to improve
-title: "bug: "
-labels: "bug"
-assignees: ""
----
-
-# Bug Report
-
-**WordServe**
-
-<!-- Please specify commit or tag version. -->
-
-**Current behavior:**
-
-<!-- Describe how the bug manifests. -->
-
-**Expected behavior:**
-
-<!-- Describe what the behavior would be without the bug. -->
-
-**Steps to reproduce:**
-
-<!--  Please explain the steps required to duplicate the issue, especially if you are able to provide a sample application. -->
-
-```
-insert short code snippets here
-```
-
-**Other information:**
-
-<!-- List any other information that is relevant to your issue. Related issues, suggestions on how to fix,  etc. -->
+description: Create a report to help WordServe to improve
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to fill out this bug report!
+  - type: input
+    id: version
+    attributes:
+      label: WordServe Version
+      description: What version of WordServe are you running?
+      placeholder: ex. v1.0.0, commit hash, or "latest"
+    validations:
+      required: true
+  - type: textarea
+    id: current-behavior
+    attributes:
+      label: Current Behavior
+      description: Describe how the bug manifests
+      placeholder: Tell us what you see!
+    validations:
+      required: true
+  - type: textarea
+    id: expected-behavior
+    attributes:
+      label: Expected Behavior
+      description: Describe what the behavior would be without the bug
+      placeholder: Tell us what you expected to happen!
+    validations:
+      required: true
+  - type: textarea
+    id: steps-to-reproduce
+    attributes:
+      label: Steps to Reproduce
+      description: Please explain the steps required to duplicate the issue
+      placeholder: |
+        1. Go to '...'
+        2. Click on '....'
+        3. Scroll down to '....'
+        4. See error
+    validations:
+      required: true
+  - type: textarea
+    id: code-snippets
+    attributes:
+      label: Code Snippets
+      description: If applicable, add code snippets to help explain your problem
+      render: shell
+  - type: textarea
+    id: additional-context
+    attributes:
+      label: Additional Context
+      description: List any other information that is relevant to your issue. Related issues, suggestions on how to fix, etc.
+      placeholder: Add any other context about the problem here.
