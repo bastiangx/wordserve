@@ -659,6 +659,11 @@ func (cl *Loader) dlReleaseDictWithConfig(cfg *config.Config) error {
 
 // dlFile downloads a file from a URL to a local path
 func (cl *Loader) dlFile(url, localPath string) error {
+	dir := filepath.Dir(localPath)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return fmt.Errorf("failed to create directory %s: %w", dir, err)
+	}
+
 	resp, err := http.Get(url)
 	if err != nil {
 		return err
