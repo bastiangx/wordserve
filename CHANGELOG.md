@@ -2,13 +2,13 @@
 
 ---
 
-## [BETA - 0.9.0] - 2025-07-05
+## [0.1.0-beta] - 2025-07-05
 
-### Release (initial)
+### Beta-Release (initial)
 
 Starting with this release, WordServe is in beta.
 This means that while the core functionality is stable,
-some features may still be under development or subject to change.
+some features may still be under development or subject to change rapidly.
 
 #### Meat and Potatoes
 
@@ -16,11 +16,6 @@ some features may still be under development or subject to change.
 - Radix Trie prefix matching with frequency ranking
 - Lazy-loaded chunked dictionaries
 - Runtime config via TOML
-
-#### Server (initial)
-
-Client-agnostic interface for WordServe server with support for fast, flexible and minimal integration.
-
-#### CLI [DBG] (initial)
-
-Running WordServe in CLI mode for testing and debugging mainly for prefix, Trie traversal ops.
+- CLI for debugging and testing
+- Basic library and depeendency for other projects
+- top 65K words dictionary included (en-us)
