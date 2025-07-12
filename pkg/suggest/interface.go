@@ -105,7 +105,7 @@ While this introduces temporary allocation, it mainly eliminates the final resul
 
 # Perf
 
-The implementation achieves sub millisecond completion times consistantly for typical workloads
+The implementation achieves sub millisecond completion times consistently for typical workloads
 through several design choices:
 radix trie structure provides O(k) lookup where k is prefix length,
 memory pools reduce alloc overhead,

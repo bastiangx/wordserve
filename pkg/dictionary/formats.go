@@ -8,9 +8,9 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/bastiangx/wordserve/internal/utils"
 	"github.com/bastiangx/wordserve/pkg/config"
 	"github.com/charmbracelet/log"
-	"github.com/bastiangx/wordserve/internal/utils"
 )
 
 // FileFormat shows file format types for dictionaries
