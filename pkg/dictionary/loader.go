@@ -44,6 +44,7 @@ Works with the base Loader to add or remove chunks based on target word counts o
 package dictionary
 
 import (
+	"archive/zip"
 	"bufio"
 	"encoding/binary"
 	"errors"
@@ -629,31 +630,30 @@ func (cl *Loader) dlReleaseDict() error {
 	return cl.dlReleaseDictWithConfig(nil)
 }
 
-// dlReleaseDictWithConfig downloads dict files with specific config
+// dlReleaseDictWithConfig downloads and extracts data.zip with dictionary files
 func (cl *Loader) dlReleaseDictWithConfig(cfg *config.Config) error {
 	log.Info("Attempting to download pre-built dictionary files...")
 
-	if cfg == nil {
-		var err error
-		cfg, _, err = config.LoadConfigWithPriority("")
-		if err != nil {
-			log.Warnf("Failed to load config, using defaults: %v", err)
-			cfg = config.DefaultConfig()
-		}
-	}
-	requiredChunks := cl.computeChunkAmount(cfg)
+	// Download data.zip (config not needed since we download the full package)
+	zipURL := fmt.Sprintf("%s/data.zip", GHReleaseURL)
+	zipPath := filepath.Join(cl.dirPath, "data.zip")
 
-	for i := 1; i <= requiredChunks; i++ {
-		filename := fmt.Sprintf("dict_%04d.bin", i)
-		url := fmt.Sprintf("%s/%s", GHReleaseURL, filename)
-		localPath := filepath.Join(cl.dirPath, filename)
-
-		if err := cl.dlFile(url, localPath); err != nil {
-			return fmt.Errorf("failed to download %s: %w", filename, err)
-		}
-		log.Debugf("Downloaded %s", filename)
+	log.Infof("Downloading data.zip from %s", zipURL)
+	if err := cl.dlFile(zipURL, zipPath); err != nil {
+		return fmt.Errorf("failed to download data.zip: %w", err)
 	}
-	log.Info("Successfully downloaded all dictionary files")
+
+	// Extract the zip file
+	if err := cl.extractZip(zipPath, cl.dirPath); err != nil {
+		return fmt.Errorf("failed to extract data.zip: %w", err)
+	}
+
+	// Clean up the zip file
+	if err := os.Remove(zipPath); err != nil {
+		log.Warnf("Failed to remove data.zip: %v", err)
+	}
+
+	log.Info("Successfully downloaded and extracted dictionary files")
 	return nil
 }
 
@@ -676,6 +676,56 @@ func (cl *Loader) dlFile(url, localPath string) error {
 
 	_, err = io.Copy(file, resp.Body)
 	return err
+}
+
+// extractZip extracts a zip file to a destination directory
+func (cl *Loader) extractZip(zipPath, destDir string) error {
+	reader, err := zip.OpenReader(zipPath)
+	if err != nil {
+		log.Errorf("failed to open zip file: %v", err)
+		return err
+	}
+	defer reader.Close()
+
+	for _, file := range reader.File {
+		if strings.Contains(file.Name, "..") {
+			log.Warnf("Skipping potentially dangerous file path: %s", file.Name)
+			continue
+		}
+
+		// Only extract .bin files
+		if !strings.HasSuffix(file.Name, ".bin") {
+			continue
+		}
+
+		filePath := filepath.Join(destDir, filepath.Base(file.Name))
+		log.Debugf("Extracting %s to %s", file.Name, filePath)
+
+		rc, err := file.Open()
+		if err != nil {
+			log.Errorf("failed to open file in zip: %v", err)
+			return err
+		}
+
+		outFile, err := os.Create(filePath)
+		if err != nil {
+			rc.Close()
+			log.Errorf("failed to create output file: %v", err)
+			return err
+		}
+
+		_, err = io.Copy(outFile, rc)
+		outFile.Close()
+		rc.Close()
+
+		if err != nil {
+			log.Errorf("failed to extract file: %v", err)
+			return err
+		}
+	}
+
+	log.Infof("Successfully extracted dictionary files")
+	return nil
 }
 
 // checkChunkCount checks if the needed number of chunks exists

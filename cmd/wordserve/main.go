@@ -50,8 +50,14 @@ import (
 	"github.com/charmbracelet/log"
 )
 
+var (
+	// GoReleaser
+	version = "dev"
+	commit  = "unknown"
+	date    = "unknown"
+)
+
 const (
-	Version = "0.1.0-beta"
 	AppName = "wordserve"
 	gh      = "https://github.com/bastiangx/wordserve"
 )
@@ -109,7 +115,7 @@ func main() {
 
 		logger.Print("")
 		logger.Print("[WordServe] Serves really Fast word completions!")
-		logger.Print("", "version", Version)
+		logger.Print("", "version", version)
 		logger.Print("")
 		logger.Print("use --help to see available options")
 		logger.Print("")
@@ -189,7 +195,7 @@ func showStartupInfo(dataDir string) {
 	println("===========")
 	println(" WordServe ")
 	println("===========")
-	log.Infof("Version: %s", Version)
+	log.Infof("Version: %s", version)
 	log.Infof("Process ID: [ %d ]", pid)
 	log.Info("init: OK")
 	log.Infof("data dir: ( %s )", dataDir)
