@@ -1,8 +1,13 @@
 # ide
 .idea
 .vscode/
-# bin
+
+# binaries and gen
 *.bin
-.github/TODO.md
+data.zip
+release-notes.md
 
 dist/
+
+# misc
+.github/TODO.md

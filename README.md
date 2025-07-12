@@ -87,10 +87,11 @@ import "github.com/bastiangx/wordserve/pkg/suggest"
 
  Download the latest precompiled binaries from the [releases page](https://github.com/bastiangx/wordserve/releases/latest).
 
-- `wordserve` should automatically build and initialize the needed `.bin` dictionary files via fetching the `words.txt` from this repo.
-- If that doesn't work, you can also download the prebuilt `.bin` files from the [releases page](https://github.com/bastiangx/wordserve/releases/latest) and place them in the `data/` directory where `wordserve` is located.
+- `wordserve` automatically downloads and initializes the needed dictionary files from GitHub releases
+- The dictionary files (`dict_*.bin`) are packaged in `data.zip` and the word list (`words.txt`) is available as a separate download
+- If automatic download fails, you can manually download `data.zip` and `words.txt` from the [releases page](https://github.com/bastiangx/wordserve/releases/latest) and extract them to the `data/` directory
 
-> If you'not not sure, use 'go install'.
+> If you're not sure, use 'go install'.
 
 ### Building from source
 
@@ -103,12 +104,12 @@ cd wordserve
 go build -ldflags="-w -s" -o wserve ./cmd/wordserve/main.go
 ```
 
-The build process for the dict files is handled by the `wordserve` binary, If you encounter any issues, you can manually run the build script located in `scripts/build-dict.lua` using [LuaJIT](https://luajit.org/).
+The build process for the dict files is handled by the `wordserve` binary, If you encounter any issues, you can manually run the build script located in `scripts/build-data.lua` using [LuaJIT](https://luajit.org/).
 
 > Make sure the `data/` directory exists and has the `words.txt` file in it before running this.
 
 ```sh
-luajit scripts/build-dict.lua
+luajit scripts/build-data.lua
 ```
 
 ## What can it do?
