@@ -10,17 +10,28 @@
 
 <div align="center">
 Lightweight prefix completion library | server, designed for any MessagePack clients
-  <br />
-  <br />
+
+<br />
+<br />
 
 <div align="center">
     <picture>
       <source srcset="https://github.com/user-attachments/assets/0da6f300-0711-4f85-85c4-6a19c22a7f75" />
       <img src="https://github.com/user-attachments/assets/0da6f300-0711-4f85-85c4-6a19c22a7f75" alt="Example usage of wordserve suggestions engine in a client app" />
     </picture>
+    <br />
+    <picture>
+      <img src="https://img.shields.io/badge/reference-black?style=for-the-badge&logo=go&logoSize=auto&labelColor=%23363A4F&color=%237dc4e4&link=https%3A%2F%2Fpkg.go.dev%2Fgithub.com%2Fbastiangx%2Fwordserve">
+      <img src="https://img.shields.io/badge/A%2B-black?style=for-the-badge&logoSize=auto&label=go%20report&labelColor=%23363A4F&color=%23a6da95&link=https%3A%2F%2Fgoreportcard.com%2Freport%2Fgithub.com%2Fbastiangx%2Fwordserve">
+      <br />
+      <img src="https://img.shields.io/github/v/release/bastiangx/wordserve?sort=semver&display_name=tag&style=for-the-badge&labelColor=%23363A4F&color=%23f5a97f&link=https%3A%2F%2Fgithub.com%2Fbastiangx%2Fwordserve%2Freleases%2Flatest">
+      <img src="https://img.shields.io/badge/MIT-black?style=for-the-badge&label=license&labelColor=%23363A4F&color=%23b7bdf8&link=https%3A%2F%2Fgithub.com%2Fbastiangx%2Fwordserve%2Fblob%2Fv0.1.1-beta%2FLICENSE">
+    </picture>
+
 </div>
 
 <br />
+
   <a href="https://github.com/bastiangx/wordserve/issues/new?assignees=&labels=bug&template=BUG-REPORT.yml&title=%5BBug%5D%3A+">Report a Bug</a>
   ·
   <a href="https://github.com/bastiangx/wordserve/issues/new?assignees=&labels=enhancement&template=FEATURE-REQUEST.yml&title=%5BFeature%5D%3A+">Request a Feature</a>
