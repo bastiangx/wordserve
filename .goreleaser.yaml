@@ -1,0 +1,80 @@
+# yaml-language-server: $schema=https://goreleaser.com/static/schema.json
+# vim: set ts=2 sw=2 tw=0 fo=cnqoj
+
+version: 2
+
+before:
+  hooks:
+    - go mod tidy
+    - go generate ./...
+
+builds:
+  - id: wordserve
+    main: ./cmd/wordserve
+    binary: wordserve
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - windows
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+      - "386"
+    ignore:
+      - goos: darwin
+        goarch: "386"
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.commit={{.Commit}}
+      - -X main.date={{.Date}}
+
+archives:
+  - id: default
+    formats: [tar.gz]
+    name_template: >-
+      {{ .ProjectName }}_
+      {{- title .Os }}_
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else if eq .Arch "386" }}i386
+      {{- else }}{{ .Arch }}{{ end }}
+      {{- if .Arm }}v{{ .Arm }}{{ end }}
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files:
+      - README.md
+      - LICENSE
+      - CHANGELOG.md
+
+changelog:
+  disable: true
+
+checksum:
+  name_template: "checksums.txt"
+  algorithm: sha256
+
+release:
+  extra_files:
+    - glob: "data/words.txt"
+    - glob: "data.zip"
+  name_template: "WordServe {{.Version}}"
+  header: |
+    ## WordServe {{.Version}}
+
+    A lightweight prefix completion library and server for MessagePack clients.
+
+    ### Downloads
+
+    - **Binaries**: Choose the appropriate binary for your platform below
+    - **Dictionary Files**: Download `data.zip` for pre-built dictionary files or `words.txt` for the word list _(optional - WordServe downloads these automatically)_
+
+    ### Installation
+
+    Extract the binary and run `./wordserve`!
+  footer: |
+    ---
+
+    *Full Changelog*: https://github.com/bastiangx/wordserve/compare/{{.PreviousTag}}...{{.Tag}}

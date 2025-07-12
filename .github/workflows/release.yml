@@ -1,0 +1,58 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: stable
+
+      # LuaJIT runs dict build script
+      - name: i LuaJIT
+        run: sudo apt update && sudo apt install -y luajit
+
+      - name: Build dict files
+        run: |
+          cd scripts
+          luajit build-data.lua -v
+          echo "Generated $(ls -1 ../data/dict_*.bin | wc -l) dictionary files"
+
+      # put all .bin files into data.zip
+      - name: init data.zip
+        run: |
+          cd data
+          zip -r ../data.zip dict_*.bin
+          echo "Created data.zip with $(unzip -l ../data.zip | grep -c '\.bin') files"
+
+      - name: Extract Changelog
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/v}
+          echo "Extracting changelog for version: $VERSION"
+          ./scripts/changelog.sh "$VERSION" > release-notes.md
+          echo "Release notes extracted:"
+          cat release-notes.md
+
+      # GoReleaser: building binaries, creating archives, uploading assets
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: release --clean --release-notes=release-notes.md
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
