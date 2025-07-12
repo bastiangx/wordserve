@@ -10,7 +10,7 @@
 
 <div align="center">
 Lightweight prefix completion library | server, designed for any MessagePack clients
-
+<br />
 <br />
 <div align="center">
     <picture>
