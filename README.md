@@ -20,22 +20,11 @@ Lightweight prefix completion library | server, designed for any MessagePack cli
 </div>
 
 <br />
-<a href="https://pkg.go.dev/github.com/bastiangx/wordserve">
-  <img src="https://img.shields.io/badge/reference-black?style=for-the-badge&logo=go&logoSize=auto&labelColor=%23363A4F&color=%237dc4e4" alt="Go Reference">
-</a>
-<a href="https://goreportcard.com/report/github.com/bastiangx/wordserve">
-  <img src="https://img.shields.io/badge/A%2B-black?style=for-the-badge&logoSize=auto&label=go%20report&labelColor=%23363A4F&color=%23a6da95" alt="Go Report Card">
-</a>
+<a href="https://pkg.go.dev/github.com/bastiangx/wordserve"><img src="https://img.shields.io/badge/reference-black?style=for-the-badge&logo=go&logoSize=auto&labelColor=%23363A4F&color=%237dc4e4" alt="Go Reference"></a> <a href="https://goreportcard.com/report/github.com/bastiangx/wordserve"><img src="https://img.shields.io/badge/A%2B-black?style=for-the-badge&logoSize=auto&label=go%20report&labelColor=%23363A4F&color=%23a6da95" alt="Go Report Card"></a>
 <br />
-<a href="https://github.com/bastiangx/wordserve/releases/latest">
-  <img src="https://img.shields.io/github/v/release/bastiangx/wordserve?sort=semver&display_name=tag&style=for-the-badge&labelColor=%23363A4F&color=%23f5a97f" alt="Latest Release">
-</a>
-<a href="https://github.com/bastiangx/wordserve/blob/main/LICENSE">
-  <img src="https://img.shields.io/badge/MIT-black?style=for-the-badge&label=license&labelColor=%23363A4F&color=%23b7bdf8" alt="MIT License">
-</a>
-
+<a href="https://github.com/bastiangx/wordserve/releases/latest"><img src="https://img.shields.io/github/v/release/bastiangx/wordserve?sort=semver&display_name=tag&style=for-the-badge&labelColor=%23363A4F&color=%23f5a97f" alt="Latest Release"></a> <a href="https://github.com/bastiangx/wordserve/blob/main/LICENSE"><img src="https://img.shields.io/badge/MIT-black?style=for-the-badge&label=license&labelColor=%23363A4F&color=%23b7bdf8" alt="MIT License"></a>
 <br />
-
+<br />
   <a href="https://github.com/bastiangx/wordserve/issues/new?assignees=&labels=bug&template=BUG-REPORT.yml&title=%5BBug%5D%3A+">Report a Bug</a>
   ·
   <a href="https://github.com/bastiangx/wordserve/issues/new?assignees=&labels=enhancement&template=FEATURE-REQUEST.yml&title=%5BFeature%5D%3A+">Request a Feature</a>
