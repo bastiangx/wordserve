@@ -50,7 +50,7 @@ package server
 type CompletionRequest struct {
 	ID     string `msgpack:"id"`
 	Prefix string `msgpack:"p"`
-	Limit  int    `msgpack:"l,omitempty"`
+	Limit  int    `msgpack:"l"`
 }
 
 // CompletionSuggestion - minimal suggestion response

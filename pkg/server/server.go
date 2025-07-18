@@ -113,6 +113,12 @@ func (s *Server) processCompletionRequest() error {
 		return s.processDictionaryRequest(rawRequest, "get_chunk_count")
 	}
 
+	if _, hasPrefix := rawRequest["p"]; hasPrefix {
+		request := s.parseCompletionRequestFromMap(rawRequest)
+		return s.handleCompletionRequest(request)
+	}
+
+	// Fallback
 	request := s.parseCompletionRequest(rawRequest)
 	return s.handleCompletionRequest(request)
 }
@@ -314,6 +320,23 @@ func parseChunkCount(value any) (int, error) {
 	default:
 		return 0, fmt.Errorf("unsupported type: %T", v)
 	}
+}
+
+// parseCompletionRequestFromMap extracts completion parameters from the raw request
+func (s *Server) parseCompletionRequestFromMap(rawRequest map[string]any) CompletionRequest {
+	bytes, err := msgpack.Marshal(rawRequest)
+	if err != nil {
+		log.Debugf("Failed to marshal request map: %v", err)
+		return s.parseCompletionRequest(rawRequest)
+	}
+
+	var request CompletionRequest
+	if err := msgpack.Unmarshal(bytes, &request); err != nil {
+		log.Debugf("Failed to unmarshal to CompletionRequest: %v", err)
+		return s.parseCompletionRequest(rawRequest)
+	}
+
+	return request
 }
 
 // parseCompletionRequest extracts completion parameters from the raw request

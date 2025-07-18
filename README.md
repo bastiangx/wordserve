@@ -24,7 +24,6 @@ Lightweight prefix completion library | server, designed for any MessagePack cli
 <br />
 <a href="https://github.com/bastiangx/wordserve/releases/latest"><img src="https://img.shields.io/github/v/release/bastiangx/wordserve?sort=semver&display_name=tag&style=for-the-badge&labelColor=%23363A4F&color=%23f5a97f" alt="Latest Release"></a> <a href="https://github.com/bastiangx/wordserve/blob/main/LICENSE"><img src="https://img.shields.io/badge/MIT-black?style=for-the-badge&label=license&labelColor=%23363A4F&color=%23b7bdf8" alt="MIT License"></a>
 <br />
-<br />
   <a href="https://github.com/bastiangx/wordserve/issues/new?assignees=&labels=bug&template=BUG-REPORT.yml&title=%5BBug%5D%3A+">Report a Bug</a>
   ·
   <a href="https://github.com/bastiangx/wordserve/issues/new?assignees=&labels=enhancement&template=FEATURE-REQUEST.yml&title=%5BFeature%5D%3A+">Request a Feature</a>
@@ -211,6 +210,9 @@ As this is the early version and Beta, there are _many_ features that are yet no
 - support conventional dict formats like `.dict`
 
 Will monitor the issues and usage to see if enough people are interested.
+
+> [!tip]
+> We just shipped the Obsidian plugin for WordServe! check it out [HERE](https://github.com/bastiangx/wordserve-obsidian)!
 
 ## Usage
 
