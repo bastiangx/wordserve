@@ -22,6 +22,12 @@ jobs:
         with:
           go-version: '1.22'
 
+      - name: Correct Go version
+        run: |
+          echo "$(go env GOROOT)/bin" >> $GITHUB_PATH
+          go version
+
+
       # LuaJIT runs dict build script
       - name: i LuaJIT
         run: sudo apt update && sudo apt install -y luajit
