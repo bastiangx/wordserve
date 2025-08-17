@@ -7,7 +7,7 @@ before:
   hooks:
     - go mod tidy
     - go generate ./...
-    - bash -c 'export GOROOT=$(go env GOROOT) && export PATH="$GOROOT/bin:$PATH" && tinygo build -o wordserve.wasm -target wasm -no-debug -opt=2 ./cmd/wasm'
+    - ./scripts/build-wasm.sh
 
 builds:
   - id: wordserve
