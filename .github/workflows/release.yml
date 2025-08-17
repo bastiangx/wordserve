@@ -47,6 +47,13 @@ jobs:
           echo "Release notes extracted:"
           cat release-notes.md
 
+      - name: Install TinyGo
+        run: |
+          wget https://github.com/tinygo-org/tinygo/releases/download/v0.31.2/tinygo_0.31.2_amd64.deb
+          sudo dpkg -i tinygo_0.31.2_amd64.deb
+          echo "TinyGo installed:"
+          tinygo version
+
       # GoReleaser: building binaries, creating archives, uploading assets
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v6
