@@ -58,7 +58,18 @@ jobs:
           wget https://github.com/tinygo-org/tinygo/releases/download/v0.31.2/tinygo_0.31.2_amd64.deb
           sudo dpkg -i tinygo_0.31.2_amd64.deb
           rm tinygo_0.31.2_amd64.deb
-          echo "TinyGo installed:"
+          echo "TinyGo installed, checking versions:"
+          go version
+          tinygo version
+          echo "GOROOT: $(go env GOROOT)"
+          
+      - name: Fix TinyGo Go version
+        run: |
+          # Ensure TinyGo uses the correct Go version by setting GOROOT explicitly
+          export GOROOT=$(go env GOROOT)
+          export PATH="$GOROOT/bin:$PATH"
+          echo "Using Go: $(which go)"
+          echo "Go version: $(go version)"
           tinygo version
 
       # GoReleaser: building binaries, creating archives, uploading assets
