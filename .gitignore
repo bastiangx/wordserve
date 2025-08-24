@@ -5,6 +5,9 @@
 # binaries and gen
 *.bin
 data.zip
+checksums.txt
+checksum.txt
+checksum-artefacts.txt
 release-notes.md
 
 dist/
