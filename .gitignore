@@ -8,6 +8,7 @@ data.zip
 checksums.txt
 checksum.txt
 checksum-artefacts.txt
+wordserve.wasm
 release-notes.md
 
 dist/
