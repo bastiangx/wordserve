@@ -54,13 +54,14 @@ changelog:
   disable: true
 
 checksum:
-  name_template: "checksums.txt"
+  name_template: "artifact-checksums.txt"
   algorithm: sha256
 
 release:
   extra_files:
     - glob: "data/words.txt"
     - glob: "data.zip"
+    - glob: "checksums.txt"
     - glob: "wordserve.wasm"
   name_template: "WordServe {{.Version}}"
   header: |

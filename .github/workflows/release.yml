@@ -45,6 +45,16 @@ jobs:
           zip -r ../data.zip dict_*.bin
           echo "Created data.zip with $(unzip -l ../data.zip | grep -c '\.bin') files"
 
+      - name: Generate data checksums
+        run: |
+          set -euo pipefail
+          cd data
+          sha256sum dict_*.bin > checksums.txt
+          (cd .. && sha256sum data.zip) >> checksums.txt
+          echo "Generated checksums.txt:"
+          cat checksums.txt
+          mv checksums.txt ..
+
       - name: Extract Changelog
         run: |
           VERSION=${GITHUB_REF#refs/tags/v}
