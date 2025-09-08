@@ -21,8 +21,9 @@ Lightweight prefix completion library | server, designed for any MessagePack cli
 
 <br />
 <a href="https://pkg.go.dev/github.com/bastiangx/wordserve"><img src="https://img.shields.io/badge/reference-black?style=for-the-badge&logo=go&logoSize=auto&labelColor=%23363A4F&color=%237dc4e4" alt="Go Reference"></a> <a href="https://goreportcard.com/report/github.com/bastiangx/wordserve"><img src="https://img.shields.io/badge/A%2B-black?style=for-the-badge&logoSize=auto&label=go%20report&labelColor=%23363A4F&color=%23a6da95" alt="Go Report Card"></a>
-<br />
-<a href="https://github.com/bastiangx/wordserve/releases/latest"><img src="https://img.shields.io/github/v/release/bastiangx/wordserve?sort=semver&display_name=tag&style=for-the-badge&labelColor=%23363A4F&color=%23f5a97f" alt="Latest Release"></a> <a href="https://github.com/bastiangx/wordserve/blob/main/LICENSE"><img src="https://img.shields.io/badge/MIT-black?style=for-the-badge&label=license&labelColor=%23363A4F&color=%23b7bdf8" alt="MIT License"></a>
+<a href="https://github.com/bastiangx/wordserve/releases/latest"><img src="https://img.shields.io/github/v/release/bastiangx/wordserve?sort=semver&display_name=tag&style=for-the-badge&labelColor=%23363A4F&color=%23b7bdf8" alt="Latest Release"></a> <a href="https://github.com/bastiangx/wordserve/blob/main/LICENSE"><img src="https://img.shields.io/badge/MIT-black?style=for-the-badge&label=license&labelColor=%23363A4F&color=%23b7bdf8" alt="MIT License"></a>
+<br /> <a href="https://addons.mozilla.org/en-US/firefox/addon/wordserve/"><img src="https://img.shields.io/badge/firefox_extension-black?style=for-the-badge&logo=firefox&logoSize=auto&labelColor=%23363A4F&color=%23ef9f76" alt="Firefox addons extension badge"></a>
+
 <br />
   <a href="https://github.com/bastiangx/wordserve/issues/new?assignees=&labels=bug&template=BUG-REPORT.yml&title=%5BBug%5D%3A+">Report a Bug</a>
   ·
@@ -35,7 +36,7 @@ Lightweight prefix completion library | server, designed for any MessagePack cli
 <tr>
 <td>
 
-WordServe is a minimalistic and  high performance **prefix completion library** with a server executable written in Go.
+WordServe is a minimalistic and high performance **prefix completion library** with a server executable written in Go.
 
 Its designed to provide auto-completion for various clients, especially those using [MessagePack](https://msgpack.org/index.html) as a serialization format.
 
@@ -88,7 +89,7 @@ import "github.com/bastiangx/wordserve/pkg/suggest"
 
 ### Releases
 
- Download the latest precompiled binaries from the [releases page](https://github.com/bastiangx/wordserve/releases/latest).
+Download the latest precompiled binaries from the [releases page](https://github.com/bastiangx/wordserve/releases/latest).
 
 - `wordserve` automatically downloads and initializes the needed dictionary files from GitHub releases
 - The dictionary files (`dict_*.bin`) are packaged in `data.zip` and the word list (`words.txt`) is available as a separate download
@@ -119,11 +120,13 @@ luajit scripts/build-data.lua
 
 ### Batched Word Suggestions
 
+<div align="center">
  <picture>
       <source media="(prefers-color-scheme: light)" srcset="https://files.catbox.moe/sd3ikj.png">
       <source media="(prefers-color-scheme: dark)" srcset="https://files.catbox.moe/h26n6q.png">
-      <img src="https://files.catbox.moe/h26n6q.png"/>
+      <img src="https://files.catbox.moe/h26n6q.png" width="550" />
     </picture>
+  </div>
 
 <br />
 
@@ -133,17 +136,19 @@ WordServe returns suggestions in batches using a radix trie. Memory pools handle
 
 ### Responsive
 
+<div align="center">
  <picture>
       <source media="(prefers-color-scheme: light)" srcset="https://files.catbox.moe/ca82mt.png">
       <source media="(prefers-color-scheme: dark)" srcset="https://files.catbox.moe/8emcdr.png">
-      <img src="https://files.catbox.moe/8emcdr.png"/>
+      <img src="https://files.catbox.moe/8emcdr.png" width="550" />
     </picture>
+  </div>
 
 <br />
 
 The IPC server communicates through stdin/stdout channels with minimal protocol overhead.
 
-Goroutines handle multiple client connections simultaneously.
+- Goroutines handle multiple client connections simultaneously.
 
 <br />
 
@@ -153,18 +158,19 @@ Goroutines handle multiple client connections simultaneously.
       <source srcset="https://files.catbox.moe/69eg4f.gif" />
       <img src="https://files.catbox.moe/69eg4f.gif" alt="a gif video showing wordserve suggestions engine handling capital letters properly" />
     </picture>
-
 <br />
 
-It just works
+It just works!
 
 ### Compact MessagePack Protocol
 
+<div align="center">
  <picture>
       <source media="(prefers-color-scheme: light)" srcset="https://files.catbox.moe/vlkcqa.png">
       <source media="(prefers-color-scheme: dark)" srcset="https://files.catbox.moe/7kwkwk.png">
-      <img src="https://files.catbox.moe/7kwkwk.png"/>
+      <img src="https://files.catbox.moe/7kwkwk.png" width="550" />
     </picture>
+  </div>
 
 <br />
 
@@ -174,17 +180,18 @@ Binary MessagePack encoding keeps request and response payloads as small as poss
 
 ### Many Many Words
 
+<div align="center">
  <picture>
       <source media="(prefers-color-scheme: light)" srcset="https://files.catbox.moe/z463kh.png">
       <source media="(prefers-color-scheme: dark)" srcset="https://files.catbox.moe/w4cn0v.png">
-      <img src="https://files.catbox.moe/w4cn0v.png"/>
+      <img src="https://files.catbox.moe/w4cn0v.png" width="550" />
     </picture>
-
+  </div>
 <br />
 
 Start with a simple `words.txt` file containing 65,000+ entries.
 
-WordServe chunks the dictionary into binary trie files and loads only what's needed, dynamically managing memory based on usage patterns.
+- WordServe chunks the dictionary into binary trie files and loads only what's needed, dynamically managing memory based on usage patterns.
 
 <br />
 
@@ -194,7 +201,6 @@ WordServe chunks the dictionary into binary trie files and loads only what's nee
       <source srcset="https://files.catbox.moe/nv7r2x.gif" />
       <img src="https://files.catbox.moe/nv7r2x.gif" alt="Memory usage of WordServe shown to be around 20MB with 50K words loaded in" />
     </picture>
-
 <br />
 
 WordServe's memory usage remains low even with large dictionaries, typically around 20MB for 50,000 words default.
@@ -211,8 +217,6 @@ As this is the early version and Beta, there are _many_ features that are yet no
 
 Will monitor the issues and usage to see if enough people are interested.
 
-> [!tip]
-> We just shipped the Obsidian plugin for WordServe! check it out [HERE](https://github.com/bastiangx/wordserve-obsidian)!
 
 ## Usage
 
@@ -261,37 +265,40 @@ suggestions := completer.Complete("ex", 5)
 The [Client doc](docs/client.md) gives some guide on how to use WordServe in your TS/JS app.
 
 ```ts
-import { spawn, ChildProcess } from 'child_process';
-import { encode, decode } from '@msgpack/msgpack';
+import { spawn, ChildProcess } from "child_process";
+import { encode, decode } from "@msgpack/msgpack";
 
 class WordServeClient {
   private process: ChildProcess;
   private requestId = 0;
 
-  constructor(binaryPath: string = 'wordserve') {
+  constructor(binaryPath: string = "wordserve") {
     this.process = spawn(binaryPath, [], {
-      stdio: ['pipe', 'pipe', 'pipe']
+      stdio: ["pipe", "pipe", "pipe"],
     });
   }
 
-  async getCompletions(prefix: string, limit: number = 20): Promise<Suggestion[]> {
+  async getCompletions(
+    prefix: string,
+    limit: number = 20,
+  ): Promise<Suggestion[]> {
     const request = {
       id: `req_${++this.requestId}`,
       p: prefix,
-      l: limit      // (optional)
+      l: limit, // (optional)
     };
 
     const binaryRequest = encode(request);
     this.process.stdin!.write(binaryRequest);
 
     return new Promise((resolve, reject) => {
-      this.process.stdout!.once('data', (data: Buffer) => {
+      this.process.stdout!.once("data", (data: Buffer) => {
         try {
           const response = decode(data) as CompletionResponse;
           const suggestions = response.s.map((s, index) => ({
             word: s.w,
             rank: s.r,
-            frequency: 65536 - s.r // Convert rank back to freq score
+            frequency: 65536 - s.r, // Convert rank back to freq score
           }));
           resolve(suggestions);
         } catch (error) {
@@ -353,10 +360,9 @@ Feel free to edit and distribute this library as you like.
 
 See [LICENSE](LICENSE)
 
-## Acknowledgements
+---
 
-- Inspired _heavily_ by [fluent-typer extension](https://github.com/bartekplus/FluentTyper) made by Bartosz Tomczyk.
-  - <span style="color: #908caa;">  Its a great extension to use on browsers, but I wanted something that can be used basically in any electron/local webapps with plugin clients, but also make it wayyy faster and more efficient since the depeendencies used there are way too bloated (C++ ...) and had too many bindings for my liking, and also more imporatantly, make this a good practice for me to learn how radix tries work for prefixes.</span>
+#### Acknowledgements
 
 - The _Beautiful_ [Rosepine theme](https://rosepinetheme.com/) used for graphics and screenshots throughout the readme.
 - The Incredible mono font, Berkeley Mono by [U.S. Graphics](https://usgraphics.com/products/berkeley-mono) used in screenshots, graphics, gifs and more.
